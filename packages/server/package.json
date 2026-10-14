@@ -6,7 +6,12 @@
   "engines": {
     "node": ">=22"
   },
+  "exports": "./dist/index.js",
+  "bin": {
+    "post-review": "dist/cli.js"
+  },
   "scripts": {
+    "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit"
   }
 }
