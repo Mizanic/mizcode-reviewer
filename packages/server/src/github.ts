@@ -1,5 +1,6 @@
-// GitHub client for post-review: App JWT, installation lookup, a token for one
-// repo, the PR head check, and a COMMENT review. Every failure is a
+// GitHub client for post-review and mizcode-review: App JWT, installation
+// lookup, a token for one repo, reads of the PR, its files, diff and review
+// threads, the PR head check, and a COMMENT review. Every failure is a
 // GitHubClientError whose code matches the post-review error contract.
 
 import { sign } from "node:crypto";
@@ -83,10 +84,11 @@ async function request(
   path: string,
   bearer: string,
   body?: unknown,
+  accept = "application/vnd.github+json",
 ): Promise<Response> {
   const doFetch = options.fetch ?? fetch;
   const headers: Record<string, string> = {
-    Accept: "application/vnd.github+json",
+    Accept: accept,
     Authorization: `Bearer ${bearer}`,
     "User-Agent": USER_AGENT,
     "X-GitHub-Api-Version": API_VERSION,
@@ -164,6 +166,18 @@ export async function createInstallationToken(
   return token.token;
 }
 
+// Signs in as the App and returns an installation token for the one repo.
+export async function createRepoToken(
+  appId: string,
+  privateKey: string,
+  repo: Repo,
+  options: ClientOptions = {},
+): Promise<string> {
+  const appJwt = createAppJwt(appId, privateKey);
+  const installationId = await getInstallationId(repo, appJwt, options);
+  return createInstallationToken(installationId, repo, appJwt, options);
+}
+
 export async function getPullRequestHead(
   repo: Repo,
   pullNumber: number,
@@ -173,6 +187,205 @@ export async function getPullRequestHead(
   const response = await request(options, "GET", `${repoPath(repo)}/pulls/${pullNumber}`, token);
   const pull = await json<{ head: { sha: string } }>(response);
   return pull.head.sha;
+}
+
+export interface PullRequest {
+  number: number;
+  title: string;
+  body: string;
+  url: string;
+  base: string;
+  headSha: string;
+  changedFiles: number;
+  additions: number;
+  deletions: number;
+}
+
+export async function getPullRequest(
+  repo: Repo,
+  pullNumber: number,
+  token: string,
+  options: ClientOptions = {},
+): Promise<PullRequest> {
+  const response = await request(options, "GET", `${repoPath(repo)}/pulls/${pullNumber}`, token);
+  const pull = await json<{
+    number: number;
+    title: string;
+    body: string | null;
+    html_url: string;
+    base: { ref: string };
+    head: { sha: string };
+    changed_files: number;
+    additions: number;
+    deletions: number;
+  }>(response);
+  return {
+    number: pull.number,
+    title: pull.title,
+    body: pull.body ?? "",
+    url: pull.html_url,
+    base: pull.base.ref,
+    headSha: pull.head.sha,
+    changedFiles: pull.changed_files,
+    additions: pull.additions,
+    deletions: pull.deletions,
+  };
+}
+
+export interface PullRequestFile {
+  path: string;
+  additions: number;
+  deletions: number;
+}
+
+// GitHub lists at most 3000 files, 100 a page. A short page is the last one.
+export async function listPullRequestFiles(
+  repo: Repo,
+  pullNumber: number,
+  token: string,
+  options: ClientOptions = {},
+): Promise<PullRequestFile[]> {
+  const files: PullRequestFile[] = [];
+  for (let page = 1; ; page++) {
+    const response = await request(
+      options,
+      "GET",
+      `${repoPath(repo)}/pulls/${pullNumber}/files?per_page=100&page=${page}`,
+      token,
+    );
+    const rows = await json<Array<{ filename: string; additions: number; deletions: number }>>(response);
+    for (const row of rows) files.push({ path: row.filename, additions: row.additions, deletions: row.deletions });
+    if (rows.length < 100) return files;
+  }
+}
+
+// The whole PR diff against its base, as one unified diff.
+export async function getPullRequestDiff(
+  repo: Repo,
+  pullNumber: number,
+  token: string,
+  options: ClientOptions = {},
+): Promise<string> {
+  const response = await request(
+    options,
+    "GET",
+    `${repoPath(repo)}/pulls/${pullNumber}`,
+    token,
+    undefined,
+    "application/vnd.github.diff",
+  );
+  if (!response.ok) throw await githubError(response);
+  return response.text();
+}
+
+export interface ReviewThread {
+  path: string;
+  line: number | null;
+  isResolved: boolean;
+  isOutdated: boolean;
+  author: string | null;
+  body: string;
+  commentCount: number;
+}
+
+const THREADS_QUERY = `query($owner: String!, $name: String!, $number: Int!, $cursor: String) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      reviewThreads(first: 100, after: $cursor) {
+        pageInfo { hasNextPage endCursor }
+        nodes {
+          isResolved
+          isOutdated
+          path
+          line
+          comments(first: 1) {
+            totalCount
+            nodes { author { login } body }
+          }
+        }
+      }
+    }
+  }
+}`;
+
+interface ThreadsPage {
+  data?: {
+    repository?: {
+      pullRequest?: {
+        reviewThreads?: {
+          pageInfo: { hasNextPage: boolean; endCursor: string | null };
+          nodes: Array<{
+            isResolved: boolean;
+            isOutdated: boolean;
+            path: string;
+            line: number | null;
+            comments: { totalCount: number; nodes: Array<{ author: { login: string } | null; body: string }> };
+          }>;
+        };
+      } | null;
+    } | null;
+  } | null;
+  errors?: Array<{ message?: string }>;
+}
+
+// Review threads and whether each is resolved. Only GraphQL has this. When a
+// later page fails, the error carries the threads read so far.
+export class ReviewThreadsError extends GitHubClientError {
+  readonly threads: ReviewThread[];
+
+  constructor(error: GitHubClientError, threads: ReviewThread[]) {
+    super(error.code, error.message, { status: error.status });
+    this.name = "ReviewThreadsError";
+    this.threads = threads;
+  }
+}
+
+export async function getReviewThreads(
+  repo: Repo,
+  pullNumber: number,
+  token: string,
+  options: ClientOptions = {},
+): Promise<ReviewThread[]> {
+  const threads: ReviewThread[] = [];
+  let cursor: string | null = null;
+  for (;;) {
+    let page: ThreadsPage;
+    try {
+      const response = await request(options, "POST", "/graphql", token, {
+        query: THREADS_QUERY,
+        variables: { owner: repo.owner, name: repo.name, number: pullNumber, cursor },
+      });
+      page = await json<ThreadsPage>(response);
+    } catch (error) {
+      if (error instanceof GitHubClientError) throw new ReviewThreadsError(error, threads);
+      // fetch throws without an HTTP status when GitHub cannot be reached.
+      const cause = (error as Error & { cause?: Error }).cause;
+      const message = `Could not reach GitHub: ${cause?.message ?? (error as Error).message}`;
+      throw new ReviewThreadsError(new GitHubClientError("github_error", message), threads);
+    }
+    const connection = page.data?.repository?.pullRequest?.reviewThreads;
+    if (page.errors?.length || !connection) {
+      const message = page.errors?.map((e) => e.message).join("; ") || "no reviewThreads in the response";
+      throw new ReviewThreadsError(
+        new GitHubClientError("github_error", `GitHub GraphQL returned an error: ${message}`),
+        threads,
+      );
+    }
+    for (const node of connection.nodes) {
+      const first = node.comments.nodes[0];
+      threads.push({
+        path: node.path,
+        line: node.line,
+        isResolved: node.isResolved,
+        isOutdated: node.isOutdated,
+        author: first?.author?.login ?? null,
+        body: first?.body ?? "",
+        commentCount: node.comments.totalCount,
+      });
+    }
+    if (!connection.pageInfo.hasNextPage) return threads;
+    cursor = connection.pageInfo.endCursor;
+  }
 }
 
 export async function assertHead(
@@ -226,9 +439,7 @@ export async function postReviewAsApp(
   input: PostReviewAsAppInput,
   options: ClientOptions = {},
 ): Promise<PostedReview> {
-  const appJwt = createAppJwt(input.appId, input.privateKey);
-  const installationId = await getInstallationId(input.repo, appJwt, options);
-  const token = await createInstallationToken(installationId, input.repo, appJwt, options);
+  const token = await createRepoToken(input.appId, input.privateKey, input.repo, options);
   await assertHead(input.repo, input.pullNumber, input.sha, token, options);
   return postReview(input.repo, input.pullNumber, input.sha, input.review, token, options);
 }
