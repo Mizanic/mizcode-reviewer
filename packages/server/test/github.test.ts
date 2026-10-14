@@ -2,7 +2,13 @@ import { generateKeyPairSync, verify } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import {
   GitHubClientError,
+  ReviewThreadsError,
   createAppJwt,
+  createRepoToken,
+  getPullRequest,
+  getPullRequestDiff,
+  getReviewThreads,
+  listPullRequestFiles,
   postReviewAsApp,
   type ClientOptions,
   type Review,
@@ -184,5 +190,129 @@ describe("postReviewAsApp", () => {
     expect(error.code).toBe("github_error");
     expect(error.status).toBe(403);
     expect(error.message).toContain("Resource not accessible by integration");
+  });
+});
+
+describe("PR reads", () => {
+  it("signs in and gets a token for the one repo", async () => {
+    const { calls, options } = mockGitHub([installation, token]);
+
+    expect(await createRepoToken("5312457", privatePem, repo, options)).toBe("ghs_installation");
+    expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
+      "GET https://api.github.com/repos/acme/widgets/installation",
+      "POST https://api.github.com/app/installations/99/access_tokens",
+    ]);
+    expect(calls[1]?.body).toEqual({ repositories: ["widgets"] });
+  });
+
+  it("reads the PR and turns a null body into an empty string", async () => {
+    const { calls, options } = mockGitHub([
+      {
+        status: 200,
+        body: {
+          number: 7,
+          title: "Add widgets",
+          body: null,
+          html_url: "https://github.com/acme/widgets/pull/7",
+          base: { ref: "main" },
+          head: { sha },
+          changed_files: 2,
+          additions: 12,
+          deletions: 3,
+        },
+      },
+    ]);
+
+    expect(await getPullRequest(repo, 7, "ghs_installation", options)).toEqual({
+      number: 7,
+      title: "Add widgets",
+      body: "",
+      url: "https://github.com/acme/widgets/pull/7",
+      base: "main",
+      headSha: sha,
+      changedFiles: 2,
+      additions: 12,
+      deletions: 3,
+    });
+    expect(calls[0]?.headers.Authorization).toBe("Bearer ghs_installation");
+  });
+
+  it("stops listing files after a short page", async () => {
+    const full = Array.from({ length: 100 }, (_, i) => ({ filename: `f${i}.ts`, additions: i, deletions: 0 }));
+    const { calls, options } = mockGitHub([{ status: 200, body: full }, { status: 200, body: [] }]);
+
+    const files = await listPullRequestFiles(repo, 7, "ghs_installation", options);
+
+    expect(files).toHaveLength(100);
+    expect(files[1]).toEqual({ path: "f1.ts", additions: 1, deletions: 0 });
+    expect(calls.map((c) => c.url)).toEqual([
+      "https://api.github.com/repos/acme/widgets/pulls/7/files?per_page=100&page=1",
+      "https://api.github.com/repos/acme/widgets/pulls/7/files?per_page=100&page=2",
+    ]);
+  });
+
+  it("asks for the diff media type and returns the diff text", async () => {
+    const { calls, options } = mockGitHub([{ status: 200, body: "diff --git a/x b/x\n" }]);
+
+    expect(await getPullRequestDiff(repo, 7, "ghs_installation", options)).toBe("diff --git a/x b/x\n");
+    expect(calls[0]?.headers.Accept).toBe("application/vnd.github.diff");
+  });
+
+  it("turns a refused diff into github_error", async () => {
+    const { options } = mockGitHub([{ status: 406, body: { message: "Sorry, the diff exceeded the maximum number of lines" } }]);
+
+    const error = await rejection(getPullRequestDiff(repo, 7, "ghs_installation", options));
+
+    expect(error.code).toBe("github_error");
+    expect(error.status).toBe(406);
+  });
+
+  it("reads review threads over GraphQL", async () => {
+    const node = {
+      isResolved: true,
+      isOutdated: true,
+      path: "src/app.ts",
+      line: null,
+      comments: { totalCount: 3, nodes: [{ author: { login: "octocat" }, body: "Rename this" }] },
+    };
+    const { calls, options } = mockGitHub([
+      {
+        status: 200,
+        body: { data: { repository: { pullRequest: { reviewThreads: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [node] } } } } },
+      },
+    ]);
+
+    expect(await getReviewThreads(repo, 7, "ghs_installation", options)).toEqual([
+      {
+        path: "src/app.ts",
+        line: null,
+        isResolved: true,
+        isOutdated: true,
+        author: "octocat",
+        body: "Rename this",
+        commentCount: 3,
+      },
+    ]);
+    expect(calls[0]?.url).toBe("https://api.github.com/graphql");
+    expect(calls[0]?.method).toBe("POST");
+  });
+
+  it("reports a missing pull request in GraphQL as github_error", async () => {
+    const { options } = mockGitHub([{ status: 200, body: { data: { repository: { pullRequest: null } } } }]);
+
+    const error = await rejection(getReviewThreads(repo, 7, "ghs_installation", options));
+
+    expect(error).toBeInstanceOf(ReviewThreadsError);
+    expect(error.code).toBe("github_error");
+    expect((error as ReviewThreadsError).threads).toEqual([]);
+  });
+
+  it("keeps the HTTP status when the GraphQL request is refused", async () => {
+    const { options } = mockGitHub([{ status: 401, body: { message: "Bad credentials" } }]);
+
+    const error = await rejection(getReviewThreads(repo, 7, "ghs_installation", options));
+
+    expect(error.status).toBe(401);
+    expect(error.message).toContain("Bad credentials");
   });
 });
