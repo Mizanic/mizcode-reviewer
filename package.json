@@ -4,8 +4,7 @@
   "type": "module",
   "license": "FSL-1.1-ALv2",
   "workspaces": [
-    "packages/*",
-    "deploy/*"
+    "packages/*"
   ],
   "engines": {
     "node": ">=22"
