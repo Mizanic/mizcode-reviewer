@@ -1,6 +1,6 @@
 # mizcode-review
 
-`mizcode-review` is the command the [pr-review skill](../../skills/pr-review/SKILL.md) runs. It reads a pull request as your GitHub App and stages it for review. It never uses `gh` and never acts as you.
+`mizcode-review` is the command the [pr-review skill](../../skills/pr-review/SKILL.md) runs. It reads a pull request as your GitHub App, stages it for review, and posts the review as the App. It never uses `gh` and never acts as you.
 
 This README is the command contract. Another runtime, for example a Python version for machines without Node.js, can implement the same commands by following it: the same subcommands, flags, workdir files, JSON output and exit codes.
 
@@ -33,7 +33,7 @@ Any other field is `bad_input`.
 
 ## Output and errors
 
-Every command prints its result to stdout and exits 0. On failure it prints one JSON object to stderr and nothing to stdout:
+Every command prints its result to stdout and exits 0. On failure it prints one JSON object to stderr and nothing to stdout, and `post` posts nothing:
 
 ```json
 { "error": "not_installed", "message": "The App is not installed on acme/widgets. Install it on that repository and try again." }
@@ -43,11 +43,12 @@ The message says what to do next.
 
 | error | When | Exit code | Extra fields |
 |---|---|---|---|
-| `bad_input` | Bad flags, an unknown command, an invalid `config.json`, a missing or invalid key file, or a workdir without a valid `state.json` | 2 | |
+| `bad_input` | Bad flags, an unknown command, an invalid `config.json`, a missing or invalid key file, a workdir without a valid `state.json`, invalid findings or suspicions, or a finding anchored outside the diff | 2 | |
 | `not_configured` | `config.json` does not exist or has no `app_id` | 4 | |
 | `not_installed` | The App is not installed on the repository | 1 | |
 | `github_error` | GitHub refused a request or could not be reached | 1 | `status`, when GitHub answered |
 | `git_error` | `git worktree remove` failed | 1 | |
+| `head_moved` | `post` only: the pull request head is no longer `head_sha` in `state.json` | 3 | `current_head` |
 
 `mizcode-review --help` and `mizcode-review <command> --help` print usage and exit 0.
 
@@ -119,6 +120,84 @@ GitHub requests, all with the installation token:
 2. `GET /repos/{owner}/{repo}/pulls/{pr}/files?per_page=100&page={n}`, until a page has fewer than 100 files
 3. `GET /repos/{owner}/{repo}/pulls/{pr}` with `Accept: application/vnd.github.diff`
 4. `POST /graphql` with the `reviewThreads` query, 100 threads a page, until `hasNextPage` is false
+
+## post
+
+```sh
+mizcode-review post --workdir <dir> --findings-file <file> [--suspicions-file <file>] --signed-by <label> [--dry-run]
+```
+
+| Flag | Meaning |
+|---|---|
+| `--workdir <dir>` | The workdir gather printed. post reads `repo`, `pr` and `head_sha` from its `state.json`, and the diff from its `diff.patch` |
+| `--findings-file <file>` | The findings, a JSON array. `[]` posts the all-clear review |
+| `--suspicions-file <file>` | Optional. Severe candidates that could not be proved, a JSON array |
+| `--signed-by <label>` | Who read the diff, as harness/model, for example `Claude/Opus-5`. One line |
+| `--dry-run` | Print the review and post nothing. Needs no settings and makes no GitHub request |
+
+A relative path is relative to the current directory.
+
+A finding:
+
+| Field | Required | Rule |
+|---|---|---|
+| `path` | yes | Non-empty string |
+| `severity` | yes | `P0`, `P1`, `P2` or `P3` |
+| `title` | yes | Non-empty string, at most 120 characters after trimming |
+| `body` | yes | Non-empty string, at most 120 words |
+| `line` | no | Positive integer. Without it the finding goes into the summary, not inline |
+| `side` | no | `LEFT` or `RIGHT`. Default `RIGHT` |
+| `start_line` | no | Positive integer, less than `line`, for a comment on more than one line. Needs `line` |
+| `start_side` | no | `LEFT` or `RIGHT`. Default: `side` |
+
+A suspicion has `path`, `consequence` and `check`, each a non-empty string, and an optional positive integer `line`. Other fields in either file are ignored. post reports every invalid row in one `bad_input` message, numbered from 0 as in the file.
+
+post then:
+
+1. Drops P3 findings. P0, P1 and P2 are posted.
+2. Makes each finding with a `line` an inline comment, ordered P0 to P2. Its body is the badge and the title in bold, a blank line, then the finding's body:
+   `**<sub><sub>![P1 Badge](https://img.shields.io/badge/P1-orange?style=flat)</sub></sub>  <title>**`. Badge colours: P0 `red`, P1 `orange`, P2 `yellow`.
+3. Checks every inline anchor, `line` on `side` and `start_line` on `start_side`, against `diff.patch`. GitHub accepts a comment on an added or context line on `RIGHT`, in new-file numbering, and on a deleted or context line on `LEFT`, in old-file numbering. One bad anchor fails the whole review, so post refuses with `bad_input` and names the nearest commentable line. When the workdir has no `diff.patch`, post skips this check, and GitHub refuses a bad anchor with `github_error` status 422.
+4. Renders the summary, the review body. `<sha>` is the first 10 characters of `head_sha`:
+
+   ```markdown
+   > [!NOTE]
+   > 🤖 Reviewed by <label>
+
+   <verdict line>
+
+   <!-- rehanhaider/pr-review-skill -->
+   ```
+
+   | Posted findings | Suspicions | Verdict line |
+   |---|---|---|
+   | none | none | ``Reviewed `<sha>` — no new issues found.`` |
+   | none | n | ``Reviewed `<sha>` — no findings, <n> unverified.`` |
+   | n | any | ``Reviewed `<sha>` — <n> finding(s) (<count per severity, e.g. 1 P0, 2 P2>).`` |
+
+   Findings without a `line` follow the verdict line under `Findings without a line:`, each as `` - `<path>` `` with the badge and title, then its body indented by two spaces. Suspicions follow under `Unverified — severe if real, could not be proved:`, each as ``- `<path>:<line>` — <consequence> Check: <check>``. The all-clear sentence and the hidden marker are what forge's watcher matches. Keep both byte-for-byte.
+
+With `--dry-run`, post prints the review as JSON, indented by two spaces, and stops:
+
+```json
+{
+  "commit_id": "<head_sha>",
+  "event": "COMMENT",
+  "body": "<the summary>",
+  "comments": [{ "path": "src/app.ts", "line": 3, "side": "RIGHT", "body": "<the comment>" }]
+}
+```
+
+Otherwise post signs in as the App with the settings above, gets an installation token limited to the one repository, and checks the pull request head. If the head is not `head_sha`, it posts nothing and fails with `head_moved`: review the new head and post again. Otherwise it posts the review, always a COMMENT review: it never approves or requests changes. On success it prints the review's URL and a newline:
+
+```text
+https://github.com/Mizanic/mizcode-reviewer/pull/36#pullrequestreview-123
+```
+
+GitHub requests, both with the installation token:
+
+1. `GET /repos/{owner}/{repo}/pulls/{pr}`
+2. `POST /repos/{owner}/{repo}/pulls/{pr}/reviews` with `commit_id`, `body`, `event` and `comments`
 
 ## cleanup
 

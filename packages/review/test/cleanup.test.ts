@@ -108,11 +108,11 @@ describe("mizcode-review", () => {
     expect(none.code).toBe(2);
     expect(none.error?.error).toBe("bad_input");
 
-    const unknown = await run(["post"], {});
+    const unknown = await run(["approve"], {});
     expect(unknown.code).toBe(2);
     expect(unknown.error).toEqual({
       error: "bad_input",
-      message: 'Unknown command "post". Run mizcode-review --help for usage.',
+      message: 'Unknown command "approve". Run mizcode-review --help for usage.',
     });
   });
 });
