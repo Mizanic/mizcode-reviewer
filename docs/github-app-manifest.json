@@ -1,9 +1,9 @@
 {
   "name": "mizcode-reviewer",
-  "url": "https://github.com/rehanhaider/mizcode-reviewer",
+  "url": "https://github.com/Mizanic/mizcode-reviewer",
   "description": "Posts pull request reviews written by your own AI tool as a bot.",
   "hook_attributes": {
-    "url": "https://github.com/rehanhaider/mizcode-reviewer",
+    "url": "https://github.com/Mizanic/mizcode-reviewer",
     "active": false
   },
   "public": false,
