@@ -89,17 +89,17 @@ describe("cleanup", () => {
   });
 });
 
-describe("mizcode-review", () => {
+describe("review.js", () => {
   it("prints usage for --help and -h", async () => {
     for (const flag of ["--help", "-h"]) {
       const { code, stdout } = await run([flag], {});
       expect(code).toBe(0);
-      expect(stdout).toContain("Usage: mizcode-review <command>");
+      expect(stdout).toContain("Usage: review.js <command>");
     }
     for (const command of ["gather", "cleanup"]) {
       const { code, stdout } = await run([command, "--help"], {});
       expect(code).toBe(0);
-      expect(stdout).toContain(`Usage: mizcode-review ${command}`);
+      expect(stdout).toContain(`Usage: review.js ${command}`);
     }
   });
 
@@ -112,7 +112,7 @@ describe("mizcode-review", () => {
     expect(unknown.code).toBe(2);
     expect(unknown.error).toEqual({
       error: "bad_input",
-      message: 'Unknown command "approve". Run mizcode-review --help for usage.',
+      message: 'Unknown command "approve". Run review.js --help for usage.',
     });
   });
 });

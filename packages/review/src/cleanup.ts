@@ -1,4 +1,4 @@
-// mizcode-review cleanup: remove the worktree gather made. The workdir and
+// review.js cleanup: remove the worktree gather made. The workdir and
 // its files stay.
 
 import { existsSync } from "node:fs";
@@ -14,7 +14,7 @@ const OPTIONS = {
   help: { type: "boolean", short: "h" },
 } as const;
 
-export const CLEANUP_USAGE = `Usage: mizcode-review cleanup --workdir <dir>
+export const CLEANUP_USAGE = `Usage: review.js cleanup --workdir <dir>
 
 Removes the worktree that gather made in <dir>. The workdir and its files stay.
 
@@ -53,11 +53,11 @@ export async function cleanup(argv: string[], options: RunOptions): Promise<stri
   try {
     parsed = parseArgs({ args: argv, options: OPTIONS, strict: true, allowPositionals: false });
   } catch (error) {
-    throw new BadInput(`${withoutPeriod((error as Error).message)}. Run mizcode-review cleanup --help for usage.`);
+    throw new BadInput(`${withoutPeriod((error as Error).message)}. Run review.js cleanup --help for usage.`);
   }
   if (parsed.values.help) return CLEANUP_USAGE;
   if (!parsed.values.workdir) {
-    throw new BadInput("Missing --workdir. Run mizcode-review cleanup --help for usage.");
+    throw new BadInput("Missing --workdir. Run review.js cleanup --help for usage.");
   }
 
   const { worktree, repoRoot } = await readState(parsed.values.workdir);

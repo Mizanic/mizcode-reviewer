@@ -1,15 +1,14 @@
 ---
-name: pr-review
+name: mizcode-reviewer
 description: >-
-  Review a GitHub pull request, branch, or open changes for concrete defects
-  introduced by the change; prioritize findings by user and system impact; and
-  post a concise GitHub review outcome, including when no issues are found. Use
-  when the user asks for a PR review, branch review, code review of open
-  changes, prioritized findings, posted review comments, or invokes
-  "/pr-review".
+  Review a GitHub pull request for concrete defects introduced by the change,
+  prioritize findings by user and system impact, and post the review as the
+  mizcode-reviewer[bot] GitHub App, including when no issues are found. Use
+  when the user asks for a review posted by mizcode-reviewer or the bot, or
+  invokes "/mizcode-reviewer".
 ---
 
-# PR Review
+# mizcode-reviewer
 
 Find every defect this change introduces that its author would fix if they
 knew about it, and post the ones that matter.
@@ -27,16 +26,17 @@ For a GitHub PR review, posting the review outcome is the deliverable. Post it
 whether findings exist or not, unless the user explicitly says not to post or
 asks to see the review first.
 
-Use the `mizcode-review` command for GitHub PR plumbing. It reads the pull
-request and posts the review as the GitHub App, `mizcode-reviewer[bot]`, never
-as the user, and it does not use `gh`. Its settings are in
+Use this skill's `scripts/review.js` for GitHub PR plumbing. Run it as
+`node <skill>/scripts/review.js`, where `<skill>` is this skill's folder. It needs Node.js 22 or later and nothing else installed. It reads
+the pull request and posts the review as the GitHub App,
+`mizcode-reviewer[bot]`, never as the user, and it does not use `gh`. Its settings are in
 `~/.config/mizcode-reviewer/config.json`: `app_id`, and `key_file`, which
 defaults to `app.pem` beside it.
 
 ## Arguments
 
 ```text
-/pr-review <pr> [--repo owner/name]
+/mizcode-reviewer <pr> [--repo owner/name]
 ```
 
 - `pr` — the pull request number.
@@ -48,7 +48,7 @@ defaults to `app.pem` beside it.
 Run, from a clone of the repository when there is one:
 
 ```bash
-mizcode-review gather <pr> [--repo owner/name]
+node <skill>/scripts/review.js gather <pr> [--repo owner/name]
 ```
 
 The command prints the reviewed SHA and creates a temporary directory
@@ -308,7 +308,7 @@ output.
 Always render and validate first:
 
 ```bash
-mizcode-review post --workdir <workdir> \
+node <skill>/scripts/review.js post --workdir <workdir> \
   --findings-file findings.json --suspicions-file suspicions.json \
   --signed-by '<harness/model>' --dry-run
 ```
@@ -373,7 +373,7 @@ automation it is the proof that this specific review landed.
 Run:
 
 ```bash
-mizcode-review cleanup --workdir <workdir>
+node <skill>/scripts/review.js cleanup --workdir <workdir>
 ```
 
 Then respond with:

@@ -1,8 +1,10 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {
-    "rootDir": "src",
-    "outDir": "dist",
+    "rootDir": "..",
+    "outDir": "../../skills/mizcode-reviewer/scripts/lib",
+    "declaration": false,
+    "sourceMap": false,
     "customConditions": []
   },
   "include": ["src"]

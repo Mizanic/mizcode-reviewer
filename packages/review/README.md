@@ -1,20 +1,12 @@
-# mizcode-review
+# review.js
 
-`mizcode-review` is the command the [pr-review skill](../../skills/pr-review/SKILL.md) runs. It reads a pull request as your GitHub App, stages it for review, and posts the review as the App. It never uses `gh` and never acts as you.
+`review.js` is the script the [mizcode-reviewer skill](../../skills/mizcode-reviewer/SKILL.md) runs, as `node <skill>/scripts/review.js <command>`. It reads a pull request as your GitHub App, stages it for review, and posts the review as the App. It never uses `gh` and never acts as you.
 
 This README is the command contract. Another runtime, for example a Python version for machines without Node.js, can implement the same commands by following it: the same subcommands, flags, workdir files, JSON output and exit codes.
 
-## Install
+## Build
 
-You need Node.js 22 or later, npm and git. From a clone of this repository:
-
-```sh
-npm ci
-npm run build
-npm install --global ./packages/review
-```
-
-The last step links `mizcode-review` into npm's global `bin` directory, `$(npm prefix --global)/bin`. The link points at your clone. To update, run `git pull`, `npm ci` and `npm run build` in the clone again.
+`npm run build` at the repository root compiles this package and the GitHub client it uses into `skills/mizcode-reviewer/scripts/lib/`. After that, the `skills/mizcode-reviewer/` folder runs on its own with Node.js 22 or later and git. It needs no `npm install`, no global link and no `node_modules`.
 
 ## Settings
 
@@ -50,12 +42,12 @@ The message says what to do next.
 | `git_error` | `git worktree remove` failed | 1 | |
 | `head_moved` | `post` only: the pull request head is no longer `head_sha` in `state.json` | 3 | `current_head` |
 
-`mizcode-review --help` and `mizcode-review <command> --help` print usage and exit 0.
+`review.js --help` and `review.js <command> --help` print usage and exit 0.
 
 ## gather
 
 ```sh
-mizcode-review gather <pr> [--repo <owner/name>]
+review.js gather <pr> [--repo <owner/name>]
 ```
 
 | Flag | Meaning |
@@ -124,7 +116,7 @@ GitHub requests, all with the installation token:
 ## post
 
 ```sh
-mizcode-review post --workdir <dir> --findings-file <file> [--suspicions-file <file>] --signed-by <label> [--dry-run]
+review.js post --workdir <dir> --findings-file <file> [--suspicions-file <file>] --signed-by <label> [--dry-run]
 ```
 
 | Flag | Meaning |
@@ -202,7 +194,7 @@ GitHub requests, both with the installation token:
 ## cleanup
 
 ```sh
-mizcode-review cleanup --workdir <dir>
+review.js cleanup --workdir <dir>
 ```
 
 | Flag | Meaning |

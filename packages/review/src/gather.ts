@@ -1,4 +1,4 @@
-// mizcode-review gather: read the PR as the App and stage what the review
+// review.js gather: read the PR as the App and stage what the review
 // needs in a new temp workdir. The files and the JSON printed match the
 // Python pr-review gather.
 
@@ -16,7 +16,7 @@ import {
   listPullRequestFiles,
   type Repo,
   type ReviewThread,
-} from "@mizcode-reviewer/server";
+} from "../../server/src/index.js";
 import { BadInput, loadConfig } from "./config.js";
 import { makeWorktree, originRepo } from "./git.js";
 import type { RunOptions } from "./review.js";
@@ -26,7 +26,7 @@ const OPTIONS = {
   help: { type: "boolean", short: "h" },
 } as const;
 
-export const GATHER_USAGE = `Usage: mizcode-review gather <pr> [--repo <owner/name>]
+export const GATHER_USAGE = `Usage: review.js gather <pr> [--repo <owner/name>]
 
 Reads the pull request, its diff, its body and its review threads as the
 GitHub App, and stages them in a new temp workdir. When run from a clone of
@@ -76,12 +76,12 @@ async function readArgs(argv: string[], cwd: string): Promise<{ help: true } | {
   try {
     parsed = parseArgs({ args: argv, options: OPTIONS, strict: true, allowPositionals: true });
   } catch (error) {
-    throw new BadInput(`${withoutPeriod((error as Error).message)}. Run mizcode-review gather --help for usage.`);
+    throw new BadInput(`${withoutPeriod((error as Error).message)}. Run review.js gather --help for usage.`);
   }
   if (parsed.values.help) return { help: true };
 
   if (parsed.positionals.length !== 1) {
-    throw new BadInput("Give exactly one pull request number. Run mizcode-review gather --help for usage.");
+    throw new BadInput("Give exactly one pull request number. Run review.js gather --help for usage.");
   }
   const pr = parsed.positionals[0] as string;
   const pullNumber = Number(pr.replace(/^#/, ""));
