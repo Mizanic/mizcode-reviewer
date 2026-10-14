@@ -10,6 +10,7 @@
     "node": ">=22"
   },
   "scripts": {
+    "build": "npm run build --workspaces",
     "lint": "eslint .",
     "typecheck": "npm run typecheck --workspaces",
     "test": "vitest run"
