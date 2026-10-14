@@ -1,6 +1,5 @@
 config.json
 .env
 *.pem
-cdk.out/
 dist/
 node_modules/

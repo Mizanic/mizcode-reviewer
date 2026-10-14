@@ -1,6 +1,0 @@
-{
-  "githubAppId": 123456,
-  "ownerGithubLogin": "alice",
-  "minPermission": "write",
-  "auth": { "mode": "key" }
-}

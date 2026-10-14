@@ -1,4 +1,4 @@
-// TODO(P3): package exports for createServer, Hooks, HookError and SubmitContext.
-// Importing this module must not start a server.
+// TODO(#8): package exports for the post-review command.
+// Importing this module must not post anything.
 
 export {};

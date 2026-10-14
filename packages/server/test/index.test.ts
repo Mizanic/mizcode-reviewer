@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-// TODO(P1): replace with real tests.
+// TODO(#6): replace with real tests.
 describe("@mizcode-reviewer/server", () => {
-  it("imports without starting a server", async () => {
+  it("imports", async () => {
     const mod = await import("../src/index.js");
     expect(mod).toBeTypeOf("object");
   });
