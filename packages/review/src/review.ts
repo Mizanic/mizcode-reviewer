@@ -6,10 +6,11 @@ import { GitHubClientError, type ClientOptions, type Output } from "@mizcode-rev
 import { GitFailed, cleanup } from "./cleanup.js";
 import { BadInput, NotConfigured } from "./config.js";
 import { gather } from "./gather.js";
+import { post } from "./post.js";
 
 export interface RunOptions extends ClientOptions {
-  // Where gather looks for the clone, and cleanup runs git when the state
-  // names no repo root. Default: process.cwd().
+  // Where gather looks for the clone, cleanup runs git when the state names
+  // no repo root, and post resolves relative paths. Default: process.cwd().
   cwd?: string;
   // The home directory that holds .config/mizcode-reviewer. Default: os.homedir().
   home?: string;
@@ -21,6 +22,8 @@ export const USAGE = `Usage: mizcode-review <command> [options]
 
 Commands:
   gather <pr> [--repo <owner/name>]  Stage the pull request for review in a new temp workdir
+  post --workdir <dir> --findings-file <file> [--suspicions-file <file>] --signed-by <label> [--dry-run]
+                                     Post the review to the pull request as the App
   cleanup --workdir <dir>            Remove the worktree gather made
 
 Run mizcode-review <command> --help for a command's options.
@@ -28,16 +31,18 @@ Run mizcode-review <command> --help for a command's options.
 Settings: ~/.config/mizcode-reviewer/config.json holds {"app_id": <id>} and,
 optionally, "key_file", which defaults to app.pem beside it.
 
-Output is JSON on stdout. Errors are {"error": "...", "message": "..."} on stderr.
+Output is on stdout: JSON, or the review URL from post. Errors are
+{"error": "...", "message": "..."} on stderr.
 
 Exit codes:
   0  done
   1  not_installed, github_error or git_error
   2  bad_input
+  3  head_moved
   4  not_configured
 `;
 
-const COMMANDS: Record<string, (argv: string[], options: RunOptions) => Promise<string>> = { gather, cleanup };
+const COMMANDS: Record<string, (argv: string[], options: RunOptions) => Promise<string>> = { gather, post, cleanup };
 
 function withoutPeriod(text: string): string {
   return text.replace(/\.+$/, "");
@@ -53,9 +58,10 @@ function githubAdvice(status: number | undefined): string {
     return "Check that key_file belongs to the App in app_id and that this machine's clock is correct.";
   }
   if (status === 403) {
-    return "Check that the App has pull requests read permission and that its installation includes this repository.";
+    return "Check that the App has pull requests read and write permission and that its installation includes this repository.";
   }
   if (status === 404) return "Check --repo and the pull request number.";
+  if (status === 422) return "Check that every finding's path and line are in the pull request diff.";
   if (status !== undefined && status >= 500) return "GitHub had a problem. Try again in a few minutes.";
   return "Fix the cause GitHub names and run again.";
 }
@@ -86,6 +92,9 @@ export async function runReview(argv: string[], output: Output, options: RunOpti
     if (error instanceof GitFailed) return fail(output, 1, { error: "git_error", message: error.message });
     if (error instanceof GitHubClientError) {
       if (error.code === "not_installed") return fail(output, 1, { error: "not_installed", message: error.message });
+      if (error.code === "head_moved") {
+        return fail(output, 3, { error: "head_moved", message: error.message, current_head: error.currentHead });
+      }
       return fail(output, 1, {
         error: "github_error",
         message: `${withoutPeriod(error.message)}. ${githubAdvice(error.status)}`,
