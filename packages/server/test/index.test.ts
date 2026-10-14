@@ -6,4 +6,9 @@ describe("@mizcode-reviewer/server", () => {
     const mod = await import("../src/index.js");
     expect(mod).toBeTypeOf("object");
   });
+
+  it("exports nothing yet", async () => {
+    const mod = await import("../src/index.js");
+    expect(Object.keys(mod)).toEqual([]);
+  });
 });
