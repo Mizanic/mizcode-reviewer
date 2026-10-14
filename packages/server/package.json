@@ -6,7 +6,12 @@
   "engines": {
     "node": ">=22"
   },
-  "exports": "./dist/index.js",
+  "exports": {
+    ".": {
+      "source": "./src/index.ts",
+      "default": "./dist/index.js"
+    }
+  },
   "bin": {
     "post-review": "dist/cli.js"
   },
