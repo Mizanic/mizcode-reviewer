@@ -23,7 +23,9 @@ export const POST_USAGE = `Usage: review.js post --workdir <dir> --findings-file
 
 Renders the findings into a COMMENT review and posts it to the pull request as
 the GitHub App. Posts nothing if the pull request head is no longer the commit
-gather staged. P3 findings are dropped; P0, P1 and P2 are posted.
+gather staged. If the App already posted the same review at that commit, posts
+nothing and prints that review's URL. P3 findings are dropped; P0, P1 and P2
+are posted.
 
 Options:
   --workdir <dir>           The workdir gather printed

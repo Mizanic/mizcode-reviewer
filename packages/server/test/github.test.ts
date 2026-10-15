@@ -73,6 +73,31 @@ const input = { appId: "5312457", privateKey: privatePem, repo, pullNumber: 7, s
 const installation = { status: 200, body: { id: 99 } };
 const token = { status: 201, body: { token: "ghs_installation", expires_at: "2026-10-14T13:00:00Z" } };
 const pull = { status: 200, body: { head: { sha } } };
+const app = { status: 200, body: { id: 5312457, slug: "mizcode-reviewer" } };
+const noReviews = { status: 200, body: [] };
+const bot = { login: "mizcode-reviewer[bot]" };
+const existingUrl = "https://github.com/acme/widgets/pull/7#pullrequestreview-50";
+
+// A review as GET /pulls/{n}/reviews lists it.
+function listed(overrides: Record<string, unknown> = {}) {
+  return { id: 50, html_url: existingUrl, user: bot, commit_id: sha, body: "Summary", ...overrides };
+}
+
+// Inline comments as GET /pulls/{n}/comments lists them, all from one review.
+// line follows the current head; original_line stays where it was posted.
+function postedComments(comments = review.comments, reviewId = 50) {
+  return comments.map((c) => ({
+    pull_request_review_id: reviewId,
+    path: c.path,
+    line: null,
+    original_line: c.line,
+    side: c.side,
+    start_line: null,
+    original_start_line: c.start_line ?? null,
+    start_side: c.start_side ?? null,
+    body: c.body,
+  }));
+}
 
 describe("createAppJwt", () => {
   it("signs an RS256 JWT for the App that GitHub accepts", () => {
@@ -94,6 +119,8 @@ describe("postReviewAsApp", () => {
       installation,
       token,
       pull,
+      app,
+      noReviews,
       { status: 200, body: { id: 123, html_url: "https://github.com/acme/widgets/pull/7#pullrequestreview-123" } },
     ]);
 
@@ -107,6 +134,8 @@ describe("postReviewAsApp", () => {
       "GET https://api.github.com/repos/acme/widgets/installation",
       "POST https://api.github.com/app/installations/99/access_tokens",
       "GET https://api.github.com/repos/acme/widgets/pulls/7",
+      "GET https://api.github.com/app",
+      "GET https://api.github.com/repos/acme/widgets/pulls/7/reviews?per_page=100&page=1",
       "POST https://api.github.com/repos/acme/widgets/pulls/7/reviews",
     ]);
 
@@ -116,12 +145,14 @@ describe("postReviewAsApp", () => {
       expect(call.headers["User-Agent"]).toBe("mizcode-reviewer");
     }
 
-    const [lookup, mint, read, post] = calls as [Call, Call, Call, Call];
+    const [lookup, mint, read, whoami, list, post] = calls as [Call, Call, Call, Call, Call, Call];
     const appJwt = lookup.headers.Authorization?.replace(/^Bearer /, "") ?? "";
     expect(decode(appJwt.split(".")[1] ?? "").iss).toBe("5312457");
     expect(mint.headers.Authorization).toBe(`Bearer ${appJwt}`);
     expect(mint.body).toEqual({ repositories: ["widgets"] });
     expect(read.headers.Authorization).toBe("Bearer ghs_installation");
+    expect(whoami.headers.Authorization).toBe(`Bearer ${appJwt}`);
+    expect(list.headers.Authorization).toBe("Bearer ghs_installation");
     expect(post.headers.Authorization).toBe("Bearer ghs_installation");
     expect(post.headers["Content-Type"]).toBe("application/json");
     expect(post.body).toEqual({
@@ -158,6 +189,8 @@ describe("postReviewAsApp", () => {
       installation,
       token,
       pull,
+      app,
+      noReviews,
       {
         status: 422,
         body: { message: "Unprocessable Entity", errors: ["Line could not be resolved"] },
@@ -180,6 +213,154 @@ describe("postReviewAsApp", () => {
     expect(error.code).toBe("github_error");
     expect(error.status).toBe(502);
     expect(error.message).toContain("Bad gateway");
+  });
+
+  it("returns the App's identical review at this commit and posts nothing", async () => {
+    const reordered = postedComments([...review.comments].reverse());
+    const { calls, options } = mockGitHub([
+      installation,
+      token,
+      pull,
+      app,
+      { status: 200, body: [listed()] },
+      { status: 200, body: reordered },
+    ]);
+
+    const result = await postReviewAsApp(input, options);
+
+    expect(result).toEqual({ review_id: 50, html_url: existingUrl });
+    expect(calls.at(-1)?.url).toBe("https://api.github.com/repos/acme/widgets/pulls/7/comments?per_page=100&page=1");
+    expect(calls.some((c) => c.method === "POST" && c.url.endsWith("/reviews"))).toBe(false);
+  });
+
+  it("compares only the comments of each candidate review", async () => {
+    const { calls, options } = mockGitHub([
+      installation,
+      token,
+      pull,
+      app,
+      { status: 200, body: [listed({ id: 40 }), listed()] },
+      {
+        status: 200,
+        body: [
+          ...postedComments([review.comments[0]!], 40),
+          ...postedComments(review.comments, 60),
+          { ...postedComments([review.comments[0]!], 70)[0]!, body: "A reply", original_line: 120 },
+          ...postedComments(),
+        ],
+      },
+    ]);
+
+    const result = await postReviewAsApp(input, options);
+
+    expect(result).toEqual({ review_id: 50, html_url: existingUrl });
+    expect(calls.filter((c) => c.url.includes("/comments"))).toHaveLength(1);
+  });
+
+  it("posts when the reviews with this body are by someone else or at another commit", async () => {
+    const { calls, options } = mockGitHub([
+      installation,
+      token,
+      pull,
+      app,
+      {
+        status: 200,
+        body: [
+          listed({ id: 1, user: { login: "rehanhaider" } }),
+          listed({ id: 2, user: null }),
+          listed({ id: 3, user: { login: "other-app[bot]" } }),
+          listed({ id: 4, commit_id: "b".repeat(40) }),
+          listed({ id: 5, body: "Another summary" }),
+        ],
+      },
+      { status: 200, body: { id: 123, html_url: "https://github.com/acme/widgets/pull/7#pullrequestreview-123" } },
+    ]);
+
+    const result = await postReviewAsApp(input, options);
+
+    expect(result.review_id).toBe(123);
+    expect(calls.some((c) => c.url.includes("/comments"))).toBe(false);
+    expect(calls.at(-1)?.method).toBe("POST");
+  });
+
+  it.each([
+    ["a comment's body", (c: ReturnType<typeof postedComments>) => [{ ...c[0]!, body: "Other" }, c[1]!]],
+    ["a comment's line", (c: ReturnType<typeof postedComments>) => [c[0]!, { ...c[1]!, original_line: 5 }]],
+    ["a comment's start line", (c: ReturnType<typeof postedComments>) => [{ ...c[0]!, original_start_line: 114 }, c[1]!]],
+    ["a comment's side", (c: ReturnType<typeof postedComments>) => [c[0]!, { ...c[1]!, side: "LEFT" }]],
+    ["a comment's path", (c: ReturnType<typeof postedComments>) => [c[0]!, { ...c[1]!, path: "src/other.ts" }]],
+    ["one comment fewer", (c: ReturnType<typeof postedComments>) => [c[0]!]],
+    ["one comment more", (c: ReturnType<typeof postedComments>) => [...c, c[1]!]],
+  ])("posts when the App's review at this commit has the same body but differs in %s", async (_name, change) => {
+    const { calls, options } = mockGitHub([
+      installation,
+      token,
+      pull,
+      app,
+      { status: 200, body: [listed()] },
+      { status: 200, body: change(postedComments()) },
+      { status: 200, body: { id: 123, html_url: "https://github.com/acme/widgets/pull/7#pullrequestreview-123" } },
+    ]);
+
+    const result = await postReviewAsApp(input, options);
+
+    expect(result.review_id).toBe(123);
+    expect(calls.at(-1)?.method).toBe("POST");
+  });
+
+  it("ignores the start side GitHub fills in when the review leaves it out", async () => {
+    const comment = { path: "src/app.ts", line: 120, side: "RIGHT" as const, start_line: 115, body: "Multi-line" };
+    const { options } = mockGitHub([
+      installation,
+      token,
+      pull,
+      app,
+      { status: 200, body: [listed()] },
+      { status: 200, body: postedComments([{ ...comment, start_side: "RIGHT" }]) },
+    ]);
+
+    const result = await postReviewAsApp({ ...input, review: { body: "Summary", comments: [comment] } }, options);
+
+    expect(result).toEqual({ review_id: 50, html_url: existingUrl });
+  });
+
+  it("reads every page of reviews and of the PR's comments", async () => {
+    const many = Array.from({ length: 100 }, (_, i) => ({ path: `src/f${i}.ts`, line: 1, side: "RIGHT" as const, body: "B" }));
+    const others = Array.from({ length: 100 }, (_, i) => listed({ id: 1000 + i, user: { login: "someone" } }));
+    const comments = postedComments([...many, review.comments[0]!]);
+    const { calls, options } = mockGitHub([
+      installation,
+      token,
+      pull,
+      app,
+      { status: 200, body: others },
+      { status: 200, body: [listed()] },
+      { status: 200, body: comments.slice(0, 100) },
+      { status: 200, body: comments.slice(100) },
+    ]);
+
+    const result = await postReviewAsApp(
+      { ...input, review: { body: "Summary", comments: [review.comments[0]!, ...many] } },
+      options,
+    );
+
+    expect(result).toEqual({ review_id: 50, html_url: existingUrl });
+    expect(calls.slice(4).map((c) => c.url.replace("https://api.github.com/repos/acme/widgets/pulls/7", ""))).toEqual([
+      "/reviews?per_page=100&page=1",
+      "/reviews?per_page=100&page=2",
+      "/comments?per_page=100&page=1",
+      "/comments?per_page=100&page=2",
+    ]);
+  });
+
+  it("posts nothing when the reviews cannot be listed", async () => {
+    const { calls, options } = mockGitHub([installation, token, pull, app, { status: 500, body: { message: "Server Error" } }]);
+
+    const error = await rejection(postReviewAsApp(input, options));
+
+    expect(error.code).toBe("github_error");
+    expect(error.status).toBe(500);
+    expect(calls.some((c) => c.method === "POST" && c.url.endsWith("/reviews"))).toBe(false);
   });
 
   it("does not report a token failure as not_installed", async () => {

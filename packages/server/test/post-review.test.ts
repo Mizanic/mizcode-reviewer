@@ -92,6 +92,8 @@ async function badInput(argv: string[]) {
 const installation = { status: 200, body: { id: 99 } };
 const token = { status: 201, body: { token: "ghs_installation" } };
 const pull = { status: 200, body: { head: { sha } } };
+const app = { status: 200, body: { slug: "mizcode-reviewer" } };
+const noReviews = { status: 200, body: [] };
 const posted = {
   status: 200,
   body: { id: 123, html_url: "https://github.com/acme/widgets/pull/7#pullrequestreview-123" },
@@ -106,7 +108,7 @@ describe("post-review", () => {
   });
 
   it("posts the review and prints its ID and URL", async () => {
-    const github = mockGitHub([installation, token, pull, posted]);
+    const github = mockGitHub([installation, token, pull, app, noReviews, posted]);
 
     const result = await run(args(), github.options);
 
@@ -124,7 +126,7 @@ describe("post-review", () => {
   });
 
   it("accepts an uppercase SHA and posts it in lowercase", async () => {
-    const github = mockGitHub([installation, token, pull, posted]);
+    const github = mockGitHub([installation, token, pull, app, noReviews, posted]);
 
     const result = await run(args({ "--sha": sha.toUpperCase() }), github.options);
 
@@ -133,7 +135,7 @@ describe("post-review", () => {
   });
 
   it("accepts an empty comments array", async () => {
-    const github = mockGitHub([installation, token, pull, posted]);
+    const github = mockGitHub([installation, token, pull, app, noReviews, posted]);
 
     const result = await run(reviewWith({ body: "All clear", comments: [] }), github.options);
 
