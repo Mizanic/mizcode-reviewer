@@ -433,6 +433,7 @@ export async function getAppLogin(appJwt: string, options: ClientOptions = {}): 
 }
 
 interface PostedComment {
+  pull_request_review_id: number | null;
   path: string;
   original_line: number | null;
   original_start_line: number | null;
@@ -466,10 +467,11 @@ function sameComments(wanted: ReviewComment[], posted: PostedComment[]): boolean
   return true;
 }
 
-async function listReviewComments(
+// Every inline comment on the PR. The per-review comments endpoint leaves out
+// line and side, so this list is read instead and grouped by review.
+async function listPullRequestComments(
   repo: Repo,
   pullNumber: number,
-  reviewId: number,
   token: string,
   options: ClientOptions,
 ): Promise<PostedComment[]> {
@@ -478,7 +480,7 @@ async function listReviewComments(
     const response = await request(
       options,
       "GET",
-      `${repoPath(repo)}/pulls/${pullNumber}/reviews/${reviewId}/comments?per_page=100&page=${page}`,
+      `${repoPath(repo)}/pulls/${pullNumber}/comments?per_page=100&page=${page}`,
       token,
     );
     const rows = await json<PostedComment[]>(response);
@@ -499,6 +501,7 @@ export async function findPostedReview(
   token: string,
   options: ClientOptions = {},
 ): Promise<PostedReview | null> {
+  const candidates: PostedReview[] = [];
   for (let page = 1; ; page++) {
     const response = await request(
       options,
@@ -510,12 +513,20 @@ export async function findPostedReview(
       Array<{ id: number; html_url: string; user: { login: string } | null; commit_id: string; body: string | null }>
     >(response);
     for (const row of rows) {
-      if (row.user?.login !== login || row.commit_id !== commitId || row.body !== review.body) continue;
-      const comments = await listReviewComments(repo, pullNumber, row.id, token, options);
-      if (sameComments(review.comments, comments)) return { review_id: row.id, html_url: row.html_url };
+      if (row.user?.login === login && row.commit_id === commitId && row.body === review.body) {
+        candidates.push({ review_id: row.id, html_url: row.html_url });
+      }
     }
-    if (rows.length < 100) return null;
+    if (rows.length < 100) break;
   }
+  if (candidates.length === 0) return null;
+
+  const comments = await listPullRequestComments(repo, pullNumber, token, options);
+  for (const candidate of candidates) {
+    const own = comments.filter((c) => c.pull_request_review_id === candidate.review_id);
+    if (sameComments(review.comments, own)) return candidate;
+  }
+  return null;
 }
 
 export interface PostReviewAsAppInput {

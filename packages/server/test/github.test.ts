@@ -83,10 +83,11 @@ function listed(overrides: Record<string, unknown> = {}) {
   return { id: 50, html_url: existingUrl, user: bot, commit_id: sha, body: "Summary", ...overrides };
 }
 
-// The review's inline comments as GET /pulls/{n}/reviews/{id}/comments lists
-// them. line follows the current head; original_line stays where it was posted.
-function postedComments(comments = review.comments) {
+// Inline comments as GET /pulls/{n}/comments lists them, all from one review.
+// line follows the current head; original_line stays where it was posted.
+function postedComments(comments = review.comments, reviewId = 50) {
   return comments.map((c) => ({
+    pull_request_review_id: reviewId,
     path: c.path,
     line: null,
     original_line: c.line,
@@ -228,8 +229,32 @@ describe("postReviewAsApp", () => {
     const result = await postReviewAsApp(input, options);
 
     expect(result).toEqual({ review_id: 50, html_url: existingUrl });
-    expect(calls.at(-1)?.url).toBe("https://api.github.com/repos/acme/widgets/pulls/7/reviews/50/comments?per_page=100&page=1");
+    expect(calls.at(-1)?.url).toBe("https://api.github.com/repos/acme/widgets/pulls/7/comments?per_page=100&page=1");
     expect(calls.some((c) => c.method === "POST" && c.url.endsWith("/reviews"))).toBe(false);
+  });
+
+  it("compares only the comments of each candidate review", async () => {
+    const { calls, options } = mockGitHub([
+      installation,
+      token,
+      pull,
+      app,
+      { status: 200, body: [listed({ id: 40 }), listed()] },
+      {
+        status: 200,
+        body: [
+          ...postedComments([review.comments[0]!], 40),
+          ...postedComments(review.comments, 60),
+          { ...postedComments([review.comments[0]!], 70)[0]!, body: "A reply", original_line: 120 },
+          ...postedComments(),
+        ],
+      },
+    ]);
+
+    const result = await postReviewAsApp(input, options);
+
+    expect(result).toEqual({ review_id: 50, html_url: existingUrl });
+    expect(calls.filter((c) => c.url.includes("/comments"))).toHaveLength(1);
   });
 
   it("posts when the reviews with this body are by someone else or at another commit", async () => {
@@ -299,7 +324,7 @@ describe("postReviewAsApp", () => {
     expect(result).toEqual({ review_id: 50, html_url: existingUrl });
   });
 
-  it("reads every page of reviews and of the review's comments", async () => {
+  it("reads every page of reviews and of the PR's comments", async () => {
     const many = Array.from({ length: 100 }, (_, i) => ({ path: `src/f${i}.ts`, line: 1, side: "RIGHT" as const, body: "B" }));
     const others = Array.from({ length: 100 }, (_, i) => listed({ id: 1000 + i, user: { login: "someone" } }));
     const comments = postedComments([...many, review.comments[0]!]);
@@ -323,8 +348,8 @@ describe("postReviewAsApp", () => {
     expect(calls.slice(4).map((c) => c.url.replace("https://api.github.com/repos/acme/widgets/pulls/7", ""))).toEqual([
       "/reviews?per_page=100&page=1",
       "/reviews?per_page=100&page=2",
-      "/reviews/50/comments?per_page=100&page=1",
-      "/reviews/50/comments?per_page=100&page=2",
+      "/comments?per_page=100&page=1",
+      "/comments?per_page=100&page=2",
     ]);
   });
 

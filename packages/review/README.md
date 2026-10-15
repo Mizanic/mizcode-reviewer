@@ -191,8 +191,8 @@ GitHub requests after sign-in:
 1. `GET /repos/{owner}/{repo}/pulls/{pr}` with the installation token
 2. `GET /app` with the App JWT, for the App's login, `<slug>[bot]`
 3. `GET /repos/{owner}/{repo}/pulls/{pr}/reviews` with the installation token, every page
-4. `GET /repos/{owner}/{repo}/pulls/{pr}/reviews/{id}/comments` with the installation token, for each of the App's reviews at `head_sha` with the same body
-5. `POST /repos/{owner}/{repo}/pulls/{pr}/reviews` with `commit_id`, `body`, `event` and `comments`, only when step 4 found no match
+4. `GET /repos/{owner}/{repo}/pulls/{pr}/comments` with the installation token, every page, only when one of the App's reviews is at `head_sha` with the same body
+5. `POST /repos/{owner}/{repo}/pulls/{pr}/reviews` with `commit_id`, `body`, `event` and `comments`, only when no review matched
 
 ## cleanup
 

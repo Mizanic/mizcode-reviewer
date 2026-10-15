@@ -376,7 +376,13 @@ describe("post: posting", () => {
       commit_id: sha,
       body: sent.body,
     };
-    const comments = sent.comments.map((c) => ({ ...c, original_line: c.line, original_start_line: null, start_side: null }));
+    const comments = sent.comments.map((c) => ({
+      ...c,
+      pull_request_review_id: 123,
+      original_line: c.line,
+      original_start_line: null,
+      start_side: null,
+    }));
 
     const { github, result } = post([finding], {
       responses: [installation, token, pull(), app, { status: 200, body: [existing] }, { status: 200, body: comments }],
