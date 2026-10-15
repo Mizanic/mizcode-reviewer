@@ -11,3 +11,4 @@ Line 10: plain text.
 Line 11: the second inline comment goes here.
 Line 12: plain text.
 Line 13: added to move the head for check 4.
+Line 14: added to move the head for the gate #14 head_moved run.
