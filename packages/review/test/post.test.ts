@@ -8,6 +8,8 @@ const sha = "1e43c532b81527f0c71614b8220c3ea8436710d9";
 const installation = { status: 200, body: { id: 99 } };
 const token = { status: 201, body: { token: "ghs_installation" } };
 const pull = (headSha = sha) => ({ status: 200, body: { head: { sha: headSha } } });
+const app = { status: 200, body: { slug: "mizcode-reviewer" } };
+const noReviews = { status: 200, body: [] };
 const posted = {
   status: 200,
   body: { id: 123, html_url: "https://github.com/acme/widgets/pull/7#pullrequestreview-123" },
@@ -333,7 +335,7 @@ describe("post: dry run", () => {
 
 describe("post: posting", () => {
   it("posts a COMMENT review at head_sha as the App and prints the review URL", async () => {
-    const { github, result } = post([finding], { responses: [installation, token, pull(), posted] });
+    const { github, result } = post([finding], { responses: [installation, token, pull(), app, noReviews, posted] });
     const out = await result;
 
     expect(out.stderr).toBe("");
@@ -343,10 +345,12 @@ describe("post: posting", () => {
       "GET https://api.github.com/repos/acme/widgets/installation",
       "POST https://api.github.com/app/installations/99/access_tokens",
       "GET https://api.github.com/repos/acme/widgets/pulls/7",
+      "GET https://api.github.com/app",
+      "GET https://api.github.com/repos/acme/widgets/pulls/7/reviews?per_page=100&page=1",
       "POST https://api.github.com/repos/acme/widgets/pulls/7/reviews",
     ]);
-    expect(github.calls[3]?.headers.Authorization).toBe("Bearer ghs_installation");
-    expect(github.calls[3]?.body).toEqual({
+    expect(github.calls[5]?.headers.Authorization).toBe("Bearer ghs_installation");
+    expect(github.calls[5]?.body).toEqual({
       commit_id: sha,
       event: "COMMENT",
       body: "> [!NOTE]\n> 🤖 Reviewed by Claude/Opus-5\n\nReviewed `1e43c532b8` — 1 finding (1 P1).\n\n<!-- rehanhaider/pr-review-skill -->\n",
@@ -359,6 +363,30 @@ describe("post: posting", () => {
         },
       ],
     });
+  });
+
+  it("prints the URL of the App's identical review at head_sha and posts nothing", async () => {
+    const first = post([finding], { responses: [installation, token, pull(), app, noReviews, posted] });
+    expect((await first.result).code).toBe(0);
+    const sent = first.github.calls.at(-1)?.body as { body: string; comments: Array<{ path: string; line: number; side: string; body: string }> };
+    const existing = {
+      id: 123,
+      html_url: "https://github.com/acme/widgets/pull/7#pullrequestreview-123",
+      user: { login: "mizcode-reviewer[bot]" },
+      commit_id: sha,
+      body: sent.body,
+    };
+    const comments = sent.comments.map((c) => ({ ...c, original_line: c.line, original_start_line: null, start_side: null }));
+
+    const { github, result } = post([finding], {
+      responses: [installation, token, pull(), app, { status: 200, body: [existing] }, { status: 200, body: comments }],
+    });
+    const out = await result;
+
+    expect(out.stderr).toBe("");
+    expect(out.code).toBe(0);
+    expect(out.stdout).toBe("https://github.com/acme/widgets/pull/7#pullrequestreview-123\n");
+    expect(github.calls.some((c) => c.method === "POST" && c.url.endsWith("/reviews"))).toBe(false);
   });
 
   it("resolves relative paths against the working directory", async () => {
@@ -440,7 +468,7 @@ describe("post: errors", () => {
 
   it("exits 2 with bad_input for a bad anchor, even on a dry run, posting nothing", async () => {
     for (const dryRun of [false, true]) {
-      const { github, result } = post([{ ...finding, line: 9 }], { dryRun, responses: [installation, token, pull(), posted] });
+      const { github, result } = post([{ ...finding, line: 9 }], { dryRun, responses: [installation, token, pull(), app, noReviews, posted] });
       const out = await result;
       expect(out.code).toBe(2);
       expect(out.error?.error).toBe("bad_input");
@@ -479,7 +507,7 @@ describe("post: errors", () => {
 
   it("exits 1 with github_error and the status when GitHub refuses the review", async () => {
     const out = await post([finding], {
-      responses: [installation, token, pull(), { status: 422, body: { message: "Unprocessable Entity", errors: ["Line could not be resolved"] } }],
+      responses: [installation, token, pull(), app, noReviews, { status: 422, body: { message: "Unprocessable Entity", errors: ["Line could not be resolved"] } }],
     }).result;
     expect(out.code).toBe(1);
     expect(out.error).toEqual({

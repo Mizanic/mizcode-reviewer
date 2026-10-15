@@ -180,16 +180,19 @@ With `--dry-run`, post prints the review as JSON, indented by two spaces, and st
 }
 ```
 
-Otherwise post signs in as the App with the settings above, gets an installation token limited to the one repository, and checks the pull request head. If the head is not `head_sha`, it posts nothing and fails with `head_moved`: review the new head and post again. Otherwise it posts the review, always a COMMENT review: it never approves or requests changes. On success it prints the review's URL and a newline:
+Otherwise post signs in as the App with the settings above, gets an installation token limited to the one repository, and checks the pull request head. If the head is not `head_sha`, it posts nothing and fails with `head_moved`: review the new head and post again. Then it lists the App's reviews on the pull request. If one is at `head_sha` with the same body and the same inline comments, it posts nothing and prints that review's URL, so running post again after a lost reply does not post every comment twice. Otherwise it posts the review, always a COMMENT review: it never approves or requests changes. On success it prints the review's URL and a newline:
 
 ```text
 https://github.com/Mizanic/mizcode-reviewer/pull/36#pullrequestreview-123
 ```
 
-GitHub requests, both with the installation token:
+GitHub requests after sign-in:
 
-1. `GET /repos/{owner}/{repo}/pulls/{pr}`
-2. `POST /repos/{owner}/{repo}/pulls/{pr}/reviews` with `commit_id`, `body`, `event` and `comments`
+1. `GET /repos/{owner}/{repo}/pulls/{pr}` with the installation token
+2. `GET /app` with the App JWT, for the App's login, `<slug>[bot]`
+3. `GET /repos/{owner}/{repo}/pulls/{pr}/reviews` with the installation token, every page
+4. `GET /repos/{owner}/{repo}/pulls/{pr}/reviews/{id}/comments` with the installation token, for each of the App's reviews at `head_sha` with the same body
+5. `POST /repos/{owner}/{repo}/pulls/{pr}/reviews` with `commit_id`, `body`, `event` and `comments`, only when step 4 found no match
 
 ## cleanup
 

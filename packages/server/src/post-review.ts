@@ -17,7 +17,9 @@ import {
 export const USAGE = `Usage: post-review --app-id <id> --key-file <path> --repo <owner/name> --pr <number> --sha <commit> --review <review.json>
 
 Posts the review to the pull request as a COMMENT review from the GitHub App.
-Posts nothing if the pull request head is no longer <commit>.
+Posts nothing if the pull request head is no longer <commit>. If the App
+already posted the same review at <commit>, posts nothing and prints that
+review's ID and URL.
 
 Options:
   --app-id <id>        The GitHub App ID

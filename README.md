@@ -69,7 +69,7 @@ post-review --app-id <id> --key-file <path> --repo <owner/name> --pr <number> --
 
 `comments` can be empty. `start_line` and `start_side` are optional and only used for comments on more than one line. The review is always a comment review; it never approves or requests changes.
 
-On success, `post-review` prints `{ "review_id": 123, "html_url": "https://github.com/...#pullrequestreview-123" }` and exits 0. On failure, it prints `{ "error": "...", "message": "..." }` to stderr. The message says what to do next.
+On success, `post-review` prints `{ "review_id": 123, "html_url": "https://github.com/...#pullrequestreview-123" }` and exits 0. If the App already posted a review at `--sha` with the same body and the same inline comments, `post-review` posts nothing and prints that review's ID and URL. On failure, it prints `{ "error": "...", "message": "..." }` to stderr. The message says what to do next.
 
 | error | When | Exit code | Extra fields |
 |---|---|---|---|
