@@ -3,3 +3,4 @@ config.json
 *.pem
 dist/
 node_modules/
+skills/mizcode-reviewer/scripts/lib/

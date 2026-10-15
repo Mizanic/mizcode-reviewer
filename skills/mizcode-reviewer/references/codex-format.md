@@ -1,6 +1,6 @@
 # GitHub review format
 
-`mizcode-review post` renders `findings.json`. Findings contain review
+`review.js post` renders `findings.json`. Findings contain review
 content; the command owns badges and the top-level summary.
 
 ## Top-level review

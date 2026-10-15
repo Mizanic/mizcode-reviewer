@@ -1,4 +1,4 @@
-// mizcode-review post: render findings.json into inline comments and a
+// review.js post: render findings.json into inline comments and a
 // summary, check every anchor against the diff, and post the review as the
 // App. The validation rules and the summary text match the Python pr-review
 // post; forge's watcher keys on the summary, so keep it byte-for-byte.
@@ -6,7 +6,7 @@
 import { readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { parseArgs } from "node:util";
-import { postReviewAsApp, type Repo, type Review, type ReviewComment } from "@mizcode-reviewer/server";
+import { postReviewAsApp, type Repo, type Review, type ReviewComment } from "../../server/src/index.js";
 import { BadInput, loadConfig } from "./config.js";
 import type { RunOptions } from "./review.js";
 
@@ -19,7 +19,7 @@ const OPTIONS = {
   help: { type: "boolean", short: "h" },
 } as const;
 
-export const POST_USAGE = `Usage: mizcode-review post --workdir <dir> --findings-file <file> [--suspicions-file <file>] --signed-by <label> [--dry-run]
+export const POST_USAGE = `Usage: review.js post --workdir <dir> --findings-file <file> [--suspicions-file <file>] --signed-by <label> [--dry-run]
 
 Renders the findings into a COMMENT review and posts it to the pull request as
 the GitHub App. Posts nothing if the pull request head is no longer the commit
@@ -384,13 +384,13 @@ export async function post(argv: string[], options: RunOptions): Promise<string>
   try {
     parsed = parseArgs({ args: argv, options: OPTIONS, strict: true, allowPositionals: false });
   } catch (error) {
-    throw new BadInput(`${withoutPeriod((error as Error).message)}. Run mizcode-review post --help for usage.`);
+    throw new BadInput(`${withoutPeriod((error as Error).message)}. Run review.js post --help for usage.`);
   }
   const values = parsed.values;
   if (values.help) return POST_USAGE;
   const missing = (["workdir", "findings-file", "signed-by"] as const).filter((name) => values[name] === undefined);
   if (missing.length > 0) {
-    throw new BadInput(`Missing ${missing.map((name) => `--${name}`).join(", ")}. Run mizcode-review post --help for usage.`);
+    throw new BadInput(`Missing ${missing.map((name) => `--${name}`).join(", ")}. Run review.js post --help for usage.`);
   }
   const signedBy = values["signed-by"] as string;
   if (signedBy.trim() === "" || /[\r\n]/.test(signedBy)) {

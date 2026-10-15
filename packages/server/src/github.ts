@@ -1,4 +1,4 @@
-// GitHub client for post-review and mizcode-review: App JWT, installation
+// GitHub client for post-review and review.js: App JWT, installation
 // lookup, a token for one repo, reads of the PR, its files, diff and review
 // threads, the PR head check, and a COMMENT review. Every failure is a
 // GitHubClientError whose code matches the post-review error contract.

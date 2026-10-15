@@ -6,12 +6,6 @@
   "engines": {
     "node": ">=22"
   },
-  "bin": {
-    "mizcode-review": "dist/cli.js"
-  },
-  "dependencies": {
-    "@mizcode-reviewer/server": "0.0.0"
-  },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit"

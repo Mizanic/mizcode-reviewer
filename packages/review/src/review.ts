@@ -1,8 +1,8 @@
-// The mizcode-review command: pick the subcommand, run it, and print its
+// The review.js command: pick the subcommand, run it, and print its
 // result or a JSON error. runReview returns the exit code instead of exiting,
 // so tests can call it.
 
-import { GitHubClientError, type ClientOptions, type Output } from "@mizcode-reviewer/server";
+import { GitHubClientError, type ClientOptions, type Output } from "../../server/src/index.js";
 import { GitFailed, cleanup } from "./cleanup.js";
 import { BadInput, NotConfigured } from "./config.js";
 import { gather } from "./gather.js";
@@ -18,7 +18,7 @@ export interface RunOptions extends ClientOptions {
   tmpdir?: string;
 }
 
-export const USAGE = `Usage: mizcode-review <command> [options]
+export const USAGE = `Usage: review.js <command> [options]
 
 Commands:
   gather <pr> [--repo <owner/name>]  Stage the pull request for review in a new temp workdir
@@ -26,7 +26,7 @@ Commands:
                                      Post the review to the pull request as the App
   cleanup --workdir <dir>            Remove the worktree gather made
 
-Run mizcode-review <command> --help for a command's options.
+Run review.js <command> --help for a command's options.
 
 Settings: ~/.config/mizcode-reviewer/config.json holds {"app_id": <id>} and,
 optionally, "key_file", which defaults to app.pem beside it.
@@ -73,13 +73,13 @@ export async function runReview(argv: string[], output: Output, options: RunOpti
     return 0;
   }
   if (name === undefined) {
-    return fail(output, 2, { error: "bad_input", message: "Give a command. Run mizcode-review --help for usage." });
+    return fail(output, 2, { error: "bad_input", message: "Give a command. Run review.js --help for usage." });
   }
   const command = COMMANDS[name];
   if (!command) {
     return fail(output, 2, {
       error: "bad_input",
-      message: `Unknown command "${name}". Run mizcode-review --help for usage.`,
+      message: `Unknown command "${name}". Run review.js --help for usage.`,
     });
   }
 

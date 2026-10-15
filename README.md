@@ -32,6 +32,24 @@ post-review --help
 
 The link points at your clone. To update, run `git pull`, `npm ci` and `npm run build` in the clone again.
 
+## The review skill
+
+`skills/mizcode-reviewer/` is a skill for Claude Code and Codex. It has your AI write the review, then posts it as your GitHub App. Build it once from the clone:
+
+```sh
+npm ci
+npm run build
+```
+
+Then copy or link the folder where your tool looks for skills:
+
+```sh
+ln -s "$PWD/skills/mizcode-reviewer" ~/.claude/skills/mizcode-reviewer   # Claude Code
+ln -s "$PWD/skills/mizcode-reviewer" ~/.agents/skills/mizcode-reviewer   # Codex
+```
+
+The folder runs on its own with Node.js 22 or later and git, so a copy works anywhere. Put the App ID in `~/.config/mizcode-reviewer/config.json` as `{ "app_id": <id> }`, with the private key beside it as `app.pem`. Run it with `/mizcode-reviewer <pr>`. [packages/review/README.md](packages/review/README.md) has the details.
+
 ## Usage
 
 ```sh

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// The mizcode-review executable. The command itself is in review.ts.
+// Entry point for the skill's scripts/review.js. The command itself is in review.ts.
 
 import { runReview } from "./review.js";
 
