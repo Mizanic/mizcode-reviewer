@@ -181,25 +181,28 @@ ${source}
 ${OUTPUT_CONTRACT}${note}`;
 }
 
-const OPENING_FENCE = /```(?:json)?[ \t]*\r?\n/g;
+const OPENING_FENCE = /```(?:json)?[ \t]*\r?\n/gi;
 
-// The review object in the tool's final message. A finding body can hold a
-// code fence of its own, so a block cannot be cut at the first closing fence.
-// Instead each opening fence is tried from the last to the first, and with it
-// each closing fence after it, from the last to the first. The real answer is
-// the last block, so it is tried before a schema or example the model showed
-// earlier. Then the whole message.
+// The review object in the tool's final message, which the contract says is
+// one fenced block. Only the last opening fence counts: falling back to an
+// earlier block, such as an example the model showed, would turn a real
+// review that fails to parse into that example, often an empty one. A fence
+// inside a finding body never looks like an opening fence, because a JSON
+// string holds no raw newline, but it does end the block early. So each
+// closing fence after the opening one is tried, from the last to the first.
+// The whole message is tried only when it has no fenced block.
 export function extractObject(text: string): Record<string, unknown> {
   const closings: number[] = [];
   for (let at = text.indexOf("```"); at !== -1; at = text.indexOf("```", at + 3)) closings.push(at);
-  const candidates: string[] = [];
-  for (const opening of [...text.matchAll(OPENING_FENCE)].reverse()) {
-    const start = opening.index + opening[0].length;
-    for (const end of [...closings].reverse()) {
-      if (end >= start) candidates.push(text.slice(start, end));
-    }
-  }
-  candidates.push(text);
+  const opening = [...text.matchAll(OPENING_FENCE)]
+    .reverse()
+    .find((match) => closings.some((end) => end >= match.index + match[0].length));
+  const candidates = opening
+    ? closings
+        .filter((end) => end >= opening.index + opening[0].length)
+        .reverse()
+        .map((end) => text.slice(opening.index + opening[0].length, end))
+    : [text];
   for (const blob of candidates) {
     let value: unknown;
     try {

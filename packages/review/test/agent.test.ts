@@ -579,6 +579,20 @@ describe("extractObject", () => {
     expect(extractObject(reply)).toEqual({ findings: [{ ...finding, body }] });
   });
 
+  it.each([
+    ["is cut off", "```json\n{\"findings\": [{\"path\": \"a.ts\"\n```"],
+    ["has an unescaped quote", '```json\n{"findings": [{"body": "say "hi""}]}\n```'],
+  ])("fails, not falls back to an earlier example, when the last block %s", (_, last) => {
+    const reply = `For example:\n${fenced({ findings: [] })}\nThe review:\n${last}\n`;
+    expect(() => extractObject(reply)).toThrow("holds no review object");
+  });
+
+  it("reads a block labelled JSON in upper case", () => {
+    expect(extractObject(`For example:\n${fenced({ findings: [] })}\n\`\`\`JSON\n${JSON.stringify({ findings: [finding] })}\n\`\`\``)).toEqual({
+      findings: [finding],
+    });
+  });
+
   it("accepts an unfenced object and prose around a block", () => {
     expect(extractObject('{"findings": []}')).toEqual({ findings: [] });
     expect(extractObject(`I reviewed it.\n\n${fenced({ suspicions: [] })}\n\nDone.`)).toEqual({ suspicions: [] });
