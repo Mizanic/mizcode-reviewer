@@ -1,8 +1,11 @@
 // How review.js agent runs Cursor's agent: its argv, its reply, and the label
 // post signs with. The agent runs read-only (--mode ask): it can read the
 // repository and run git and rg, but cannot edit, commit or touch GitHub. It
-// does not run at all in a workspace with project hooks.
+// does not run at all in a workspace with project config that could change
+// that.
 
+import { existsSync, readdirSync } from "node:fs";
+import { join } from "node:path";
 import type { AgentRun, Tool } from "./agent.js";
 import { AgentFailed } from "./config.js";
 
@@ -60,23 +63,34 @@ export function cursorReply(stdout: string): string {
   return result;
 }
 
-// cursor-agent runs the hooks these files name, even in ask mode, and has no
-// option that turns project hooks off. In the head/ worktree they come from
-// the pull request, so its author could run any program on the reviewer's
-// machine, where the App's private key is.
-export const UNSAFE_PATHS = [
-  ".cursor/hooks.json",
-  ".cursor/plugins",
-  ".claude/settings.json",
-  ".claude/settings.local.json",
-  ".claude/plugins",
-];
+// cursor-agent loads project config from the workspace, even in ask mode, and
+// has no option that turns it off. In the head/ worktree that config comes
+// from the pull request: hooks in .cursor/hooks.json or .claude/settings.json
+// run programs, and a .cursor/cli.json can allow shell commands. Cursor keeps
+// adding such files, so every entry in .cursor/ is refused except the two that
+// cannot run anything: rules, which is prompt text, and mcp.json, whose
+// servers wait for an approval this run never gives.
+const SAFE_CURSOR_ENTRIES = new Set(["rules", "mcp.json"]);
+export const UNSAFE_CLAUDE_PATHS = [".claude/settings.json", ".claude/settings.local.json", ".claude/plugins"];
+
+export function unsafePaths(workspace: string): string[] {
+  let entries: string[] = [];
+  try {
+    entries = readdirSync(join(workspace, ".cursor"));
+  } catch {
+    // No .cursor directory.
+  }
+  return [
+    ...entries.filter((entry) => !SAFE_CURSOR_ENTRIES.has(entry)).sort().map((entry) => `.cursor/${entry}`),
+    ...UNSAFE_CLAUDE_PATHS.filter((path) => existsSync(join(workspace, path))),
+  ];
+}
 
 export const cursor: Tool = {
   name: "cursor",
   executable: "cursor-agent",
   defaultModel: DEFAULT_MODEL,
-  unsafePaths: UNSAFE_PATHS,
+  unsafePaths,
   promptNote: "",
   label: (model) => `Cursor/${prettyModel(model)}`,
   invocation(run: AgentRun) {

@@ -35,9 +35,10 @@ export interface Tool {
   defaultVariant?: string;
   // The tool can read the code only from gather's head/ worktree.
   needsWorktree?: boolean;
-  // Paths in the workspace whose commands the tool would run, with no way to
-  // turn that off. If one is there, agent does not start the tool.
-  unsafePaths?: string[];
+  // The paths in the workspace that could make the tool run commands or loosen
+  // its read-only mode, with no way to turn that off. If there are any, agent
+  // does not start the tool.
+  unsafePaths?(workspace: string): string[];
   // Added to the end of the prompt.
   promptNote: string;
   label(model: string): string;
@@ -436,10 +437,10 @@ export async function agent(argv: string[], options: RunOptions): Promise<string
   if (!executable) throw new AgentFailed(`${tool.executable} is not on PATH. Install it, or review with another reader.`);
 
   const workspace = state.worktree ?? state.repoRoot ?? cwd;
-  const unsafe = (tool.unsafePaths ?? []).filter((path) => existsSync(join(workspace, path)));
+  const unsafe = tool.unsafePaths?.(workspace) ?? [];
   if (unsafe.length > 0) {
     throw new AgentFailed(
-      `${tool.executable} would run commands from ${unsafe.join(", ")} in ${workspace}, which is the code under review. Review this pull request with another reader.`,
+      `${tool.executable} would load ${unsafe.join(", ")} from ${workspace}, which is the code under review, and could run commands. Review this pull request with another reader.`,
     );
   }
   const run: AgentRun = { model, variant, workdir, workspace, workdirInWorkspace: inside(workdir, workspace) };

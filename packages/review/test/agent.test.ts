@@ -2,7 +2,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "n
 import { delimiter, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { extractObject, normalise } from "../src/agent.js";
-import { UNSAFE_PATHS, prettyModel } from "../src/cursor.js";
+import { prettyModel } from "../src/cursor.js";
 import { READ_ONLY_BASH, SHELL_NOTE, opencodeLabel, opencodeReply } from "../src/opencode.js";
 import { newDir, run } from "./helpers.js";
 
@@ -289,17 +289,38 @@ describe("agent cursor", () => {
     expect(existsSync(join(workdir, "findings.json"))).toBe(false);
   });
 
-  it.each(UNSAFE_PATHS)("refuses to start when the workspace has %s", async (path) => {
+  it.each([
+    [".cursor/hooks.json"],
+    [".cursor/cli.json"],
+    [".cursor/policy.json"],
+    [".cursor/plugins/a.json"],
+    [".cursor/anything-new"],
+    [".claude/settings.json"],
+    [".claude/settings.local.json"],
+    [".claude/plugins/a.json"],
+  ])("refuses to start when the workspace has %s", async (path) => {
     const { workdir, worktree } = staged();
     mkdirSync(join(worktree, path, ".."), { recursive: true });
     writeFileSync(join(worktree, path), '{"hooks": {}}');
     const { env } = fakeTool("cursor-agent", { stdout: cursorEnvelope(fenced({ findings: [] })) });
     const { code, error } = await agent(["cursor", "--workdir", workdir, "--method-file", method], env);
+    const loaded = path.split("/").slice(0, 2).join("/");
 
     expect(code).toBe(1);
     expect(error?.error).toBe("agent_error");
-    expect(String(error?.message)).toContain(`cursor-agent would run commands from ${path} in ${worktree}`);
+    expect(String(error?.message)).toContain(`cursor-agent would load ${loaded} from ${worktree}`);
     expect(existsSync(join(workdir, "findings.json"))).toBe(false);
+  });
+
+  it("runs with only .cursor/rules and .cursor/mcp.json", async () => {
+    const { workdir, worktree } = staged();
+    mkdirSync(join(worktree, ".cursor", "rules"), { recursive: true });
+    writeFileSync(join(worktree, ".cursor", "mcp.json"), "{}");
+    const { env } = fakeTool("cursor-agent", { stdout: cursorEnvelope(fenced({ findings: [] })) });
+    const { code, stderr } = await agent(["cursor", "--workdir", workdir, "--method-file", method], env);
+
+    expect(stderr).toBe("");
+    expect(code).toBe(0);
   });
 
   it("exits 1 when the tool runs past --timeout", async () => {
