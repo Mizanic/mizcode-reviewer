@@ -16,7 +16,7 @@ import { parseArgs } from "node:util";
 import { AgentFailed, BadInput, ReviewIncomplete } from "./config.js";
 import { cursor } from "./cursor.js";
 import { opencode } from "./opencode.js";
-import { parseFindings, parseSuspicions } from "./post.js";
+import { checkAnchors, parseFindings, parseSuspicions, splitFindings } from "./post.js";
 import type { RunOptions } from "./review.js";
 
 export interface AgentRun {
@@ -207,9 +207,10 @@ function toLine(value: unknown): unknown {
 }
 
 // Fixes case and shape only: a lowercase severity or side, a line given as a
-// string, a suspicion line given as null. Then post's own checks run, so a
-// row they would refuse fails here, before anything is written.
-export function normalise(reply: Record<string, unknown>): { findings: unknown[]; suspicions: unknown[] } {
+// string, a suspicion line given as null. Then post's own checks run, the
+// anchor check too when there is a diff, so a review post would refuse fails
+// here, before anything is written.
+export function normalise(reply: Record<string, unknown>, diff?: string): { findings: unknown[]; suspicions: unknown[] } {
   // Any error but null, whatever its type: {"error": true, "findings": []}
   // is not an all-clear.
   if (reply.error !== undefined && reply.error !== null) {
@@ -239,11 +240,30 @@ export function normalise(reply: Record<string, unknown>): { findings: unknown[]
     if (row.line === null) delete row.line;
     else if (row.line !== undefined) row.line = toLine(row.line);
   }
-  const problems = [...parseFindings(findings).errors, ...parseSuspicions(suspicions).errors];
+  const parsed = parseFindings(findings);
+  const problems = [...parsed.errors, ...parseSuspicions(suspicions).errors];
   if (problems.length > 0) {
     throw new AgentFailed(`The tool's review does not fit the format post reads: ${problems.join("; ")}.`);
   }
+  // post refuses the whole review for one anchor outside the diff, so check
+  // them the same way: P0 to P2 findings with a line, against diff.patch.
+  const { inline } = splitFindings(parsed.findings);
+  const anchorErrors = diff === undefined ? [] : checkAnchors(inline, diff);
+  if (anchorErrors.length > 0) {
+    throw new AgentFailed(`The tool's review has comment anchors outside the diff, so post would refuse it: ${anchorErrors.join("; ")}.`);
+  }
   return { findings, suspicions };
+}
+
+// The workdir's diff.patch, or undefined when gather could not fetch it.
+async function readDiff(workdir: string): Promise<string | undefined> {
+  const path = join(workdir, "diff.patch");
+  try {
+    return await readFile(path, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw new BadInput(`Could not read ${path}: ${withoutPeriod((error as Error).message)}.`);
+  }
 }
 
 async function readState(workdir: string): Promise<State> {
@@ -375,6 +395,15 @@ export async function agent(argv: string[], options: RunOptions): Promise<string
   if ("help" in args) return AGENT_USAGE;
   const { tool, workdir, model, variant } = args;
 
+  // Findings from an earlier run must not survive a run that fails, even one
+  // that fails on its arguments.
+  const findingsFile = join(workdir, "findings.json");
+  const suspicionsFile = join(workdir, "suspicions.json");
+  if (!args.printPrompt) {
+    await rm(findingsFile, { force: true });
+    await rm(suspicionsFile, { force: true });
+  }
+
   const state = await readState(workdir);
   let method: string;
   try {
@@ -384,12 +413,6 @@ export async function agent(argv: string[], options: RunOptions): Promise<string
   }
   const prompt = buildPrompt(state, workdir, method, tool.promptNote);
   if (args.printPrompt) return `${prompt}\n`;
-
-  // Findings from an earlier run must not survive a run that fails.
-  const findingsFile = join(workdir, "findings.json");
-  const suspicionsFile = join(workdir, "suspicions.json");
-  await rm(findingsFile, { force: true });
-  await rm(suspicionsFile, { force: true });
 
   const env = options.env ?? process.env;
   const executable = which(tool.executable, env);
@@ -413,7 +436,7 @@ export async function agent(argv: string[], options: RunOptions): Promise<string
     throw new AgentFailed(`${tool.executable} exited ${exit.code ?? "on a signal"}: ${detail.slice(0, 500)}`);
   }
 
-  const { findings, suspicions } = normalise(extractObject(tool.reply(exit.stdout)));
+  const { findings, suspicions } = normalise(extractObject(tool.reply(exit.stdout)), await readDiff(workdir));
   // suspicions.json first: a findings.json on disk means both were written.
   // A failed write leaves neither.
   try {

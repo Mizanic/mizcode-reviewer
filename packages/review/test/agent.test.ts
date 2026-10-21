@@ -193,6 +193,14 @@ describe("agent cursor", () => {
     expect(JSON.parse(posted.stdout).comments).toHaveLength(1);
   });
 
+  it("does not check anchors of P3 findings, which post drops", async () => {
+    const { workdir } = staged();
+    const { env } = fakeTool("cursor-agent", { stdout: cursorEnvelope(fenced({ findings: [{ ...finding, severity: "P3", line: 9 }] })) });
+    const { code } = await agent(["cursor", "--workdir", workdir, "--method-file", method], env);
+
+    expect(code).toBe(0);
+  });
+
   it("labels the review with the model that ran", async () => {
     const { workdir } = staged();
     const { env, recorded } = fakeTool("cursor-agent", { stdout: cursorEnvelope(fenced({ findings: [] })) });
@@ -245,6 +253,11 @@ describe("agent cursor", () => {
       "a boolean line",
       { stdout: cursorEnvelope(fenced({ findings: [{ ...finding, line: true }] })) },
       "finding 0: 'line' must be a positive integer",
+    ],
+    [
+      "an anchor outside the diff",
+      { stdout: cursorEnvelope(fenced({ findings: [{ ...finding, line: 9 }] })) },
+      "comment anchors outside the diff, so post would refuse it: finding 0 (src/app.ts:9, RIGHT): line is not part of the diff; nearest commentable RIGHT line is 3",
     ],
     [
       "findings that are not an array",
@@ -398,6 +411,16 @@ describe("agent arguments", () => {
     expect(stdout).toContain("Do not run `review.js`");
     expect(stdout).toContain("## Shell in this run");
     expect(existsSync(join(workdir, "findings.json"))).toBe(true);
+  });
+
+  it("deletes findings from an earlier run even when the arguments are bad", async () => {
+    const workdir = newDir("workdir");
+    writeFileSync(join(workdir, "findings.json"), "[]");
+    writeFileSync(join(workdir, "suspicions.json"), "[]");
+    const { code } = await agent(["cursor", "--workdir", workdir], {});
+
+    expect(code).toBe(2);
+    expect(written(workdir)).toEqual({ findings: undefined, suspicions: undefined });
   });
 
   it.each([
