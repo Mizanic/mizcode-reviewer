@@ -392,7 +392,10 @@ export async function agent(argv: string[], options: RunOptions): Promise<string
   const invocation = tool.invocation(run);
   let exit: Exit;
   try {
-    exit = await runTool(executable, invocation.argv, prompt, workspace, { ...env, ...invocation.env }, args.timeout);
+    // PWD too: opencode takes its directory from PWD, not from the process's
+    // working directory, and would otherwise review the caller's checkout.
+    const childEnv = { ...env, ...invocation.env, PWD: workspace };
+    exit = await runTool(executable, invocation.argv, prompt, workspace, childEnv, args.timeout);
   } catch (error) {
     throw new AgentFailed(`Could not start ${tool.executable}: ${withoutPeriod((error as Error).message)}.`);
   }
@@ -403,8 +406,16 @@ export async function agent(argv: string[], options: RunOptions): Promise<string
   }
 
   const { findings, suspicions } = normalise(extractObject(tool.reply(exit.stdout)));
-  await writeFile(findingsFile, JSON.stringify(findings, null, 2), "utf8");
-  await writeFile(suspicionsFile, JSON.stringify(suspicions, null, 2), "utf8");
+  // suspicions.json first: a findings.json on disk means both were written.
+  // A failed write leaves neither.
+  try {
+    await writeFile(suspicionsFile, JSON.stringify(suspicions, null, 2), "utf8");
+    await writeFile(findingsFile, JSON.stringify(findings, null, 2), "utf8");
+  } catch (error) {
+    await rm(suspicionsFile, { force: true });
+    await rm(findingsFile, { force: true });
+    throw error;
+  }
 
   return `${JSON.stringify(
     {

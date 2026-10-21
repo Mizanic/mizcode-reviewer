@@ -53,6 +53,8 @@ interface Fake {
   exit?: number;
   stderr?: string;
   sleep?: number;
+  // A directory the fake makes before it replies.
+  mkdir?: string;
 }
 
 // A fake cursor-agent or opencode on PATH. It records its argv, cwd, stdin
@@ -71,8 +73,9 @@ let input = "";
 process.stdin.on("data", (chunk) => (input += chunk));
 process.stdin.on("end", () => {
   fs.writeFileSync(${JSON.stringify(record)}, JSON.stringify({
-    argv: process.argv.slice(2), cwd: process.cwd(), input, config: process.env.OPENCODE_CONFIG_CONTENT ?? null,
+    argv: process.argv.slice(2), cwd: process.cwd(), pwd: process.env.PWD, input, config: process.env.OPENCODE_CONFIG_CONTENT ?? null,
   }));
+  if (fake.mkdir) fs.mkdirSync(fake.mkdir);
   setTimeout(() => {
     process.stdout.write(fake.stdout);
     if (fake.stderr) process.stderr.write(fake.stderr);
@@ -85,7 +88,7 @@ process.stdin.on("end", () => {
   // The fake must not shadow the real tool by accident, and must find node.
   const env = { ...process.env, PATH: `${dir}${delimiter}${process.env.PATH ?? ""}` };
   const recorded = () =>
-    JSON.parse(readFileSync(record, "utf8")) as { argv: string[]; cwd: string; input: string; config: string | null };
+    JSON.parse(readFileSync(record, "utf8")) as { argv: string[]; cwd: string; pwd: string; input: string; config: string | null };
   return { env, recorded };
 }
 
@@ -260,6 +263,18 @@ describe("agent cursor", () => {
     expect(written(workdir)).toEqual({ findings: undefined, suspicions: undefined });
   });
 
+  it("leaves no findings.json when writing suspicions.json fails", async () => {
+    const { workdir } = staged();
+    // A directory where suspicions.json goes makes its write fail.
+    const { env } = fakeTool("cursor-agent", {
+      stdout: cursorEnvelope(fenced({ findings: [], suspicions: [suspicion] })),
+      mkdir: join(workdir, "suspicions.json"),
+    });
+
+    await expect(agent(["cursor", "--workdir", workdir, "--method-file", method], env)).rejects.toThrow();
+    expect(existsSync(join(workdir, "findings.json"))).toBe(false);
+  });
+
   it("exits 1 when the tool runs past --timeout", async () => {
     const { workdir } = staged();
     const { env } = fakeTool("cursor-agent", { stdout: cursorEnvelope(fenced({ findings: [] })), sleep: 30 });
@@ -311,6 +326,8 @@ describe("agent opencode", () => {
     const call = recorded();
     expect(call.argv).toEqual(["run", "--standalone", "--model", "opencode/deepseek-v4.1-flash-free#max", "--format", "json"]);
     expect(call.cwd).toBe(worktree);
+    // opencode reads its directory from PWD.
+    expect(call.pwd).toBe(worktree);
     expect(call.input).toContain("THE REVIEW METHOD");
     expect(call.input.endsWith(SHELL_NOTE)).toBe(true);
     const permission = JSON.parse(call.config as string).permission;

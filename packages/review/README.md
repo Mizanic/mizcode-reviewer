@@ -133,7 +133,7 @@ review.js agent <cursor|opencode> --workdir <dir> [--model <id>] [--variant <eff
 
 agent has a different model review the code than the one that wrote it. It reads `state.json` from the workdir and builds one prompt: the method file in full, then how this run differs from it, then the output contract. The tool reads the diff, the workdir files and the repository, and replies with one JSON object, `{"findings": [...], "suspicions": [...]}` or `{"error": "<what stopped it>"}`. agent never posts.
 
-The tool runs in `worktree`, or `repo_root` when gather made no worktree, or the current directory. It runs read-only:
+The tool runs in `worktree`, or `repo_root` when gather made no worktree, or the current directory. `PWD` is set to that directory too, because opencode reads its directory from `PWD`. It runs read-only:
 
 | Tool | How it runs |
 |---|---|
@@ -142,7 +142,7 @@ The tool runs in `worktree`, or `repo_root` when gather made no worktree, or the
 
 agent takes the review object from the last fenced JSON block in the tool's final message, or from the whole message. It changes the case of `severity`, `side` and `start_side` to upper case, turns a `line` or `start_line` given as a string of digits into a number, and drops a suspicion `line` that is `null`. Then it runs `post`'s checks on every row. A row they refuse fails the run with `agent_error`, so the files it writes always pass them.
 
-Before it starts the tool, agent deletes `findings.json` and `suspicions.json` from the workdir. On success it writes both, each a JSON array, so `[]` means the tool finished the review and found nothing. On any failure it writes neither, so a failed run cannot be posted as an all-clear.
+Before it starts the tool, agent deletes `findings.json` and `suspicions.json` from the workdir. On success it writes both, each a JSON array, so `[]` means the tool finished the review and found nothing. It writes `suspicions.json` first and removes both if either write fails. On any failure it leaves neither, so a failed run cannot be posted as an all-clear.
 
 On success, agent prints this JSON object, indented by two spaces, followed by a newline:
 
