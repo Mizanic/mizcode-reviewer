@@ -44,7 +44,8 @@ export const READ_ONLY_BASH: Record<string, "allow" | "deny"> = {
   "*>*": "deny",
   "*--output*": "deny",
   "rg *--pre*": "deny",
-  // Each of these makes a gh api read a write.
+  // Each of these can make a gh api read a write, so each is denied, even
+  // with GET.
   "gh api * -X*": "deny",
   "gh api * --method*": "deny",
   "gh api * -f *": "deny",
