@@ -1,6 +1,6 @@
 # review.js
 
-`review.js` is the script the [mizcode-reviewer skill](../../skills/mizcode-reviewer/SKILL.md) runs, as `node <skill>/scripts/review.js <command>`. It reads a pull request as your GitHub App, stages it for review, and posts the review as the App. It never uses `gh` and never acts as you.
+`review.js` is the script the [mizcode-reviewer skill](../../skills/mizcode-reviewer/SKILL.md) runs, as `node <skill>/scripts/review.js <command>`. It reads a pull request as your GitHub App, stages it for review, and posts the review as the App. It never uses `gh` and never acts as you. Its `agent` command can have Cursor or OpenCode read the diff instead of your AI tool. When gather made no `head/`, the prompt tells Cursor to read files with `gh api`, as you.
 
 This README is the command contract. Another runtime, for example a Python version for machines without Node.js, can implement the same commands by following it: the same subcommands, flags, workdir files, JSON output and exit codes.
 
@@ -40,7 +40,9 @@ The message says what to do next.
 | `not_installed` | The App is not installed on the repository | 1 | |
 | `github_error` | GitHub refused a request or could not be reached | 1 | `status`, when GitHub answered |
 | `git_error` | `git worktree remove` failed | 1 | |
+| `agent_error` | `agent` only: the tool is not on PATH, the workspace has project config that cursor-agent would load, or the tool exited non-zero, ran past `--timeout`, or printed a reply that is not a review in the format `post` reads | 1 | |
 | `head_moved` | `post` only: the pull request head is no longer `head_sha` in `state.json` | 3 | `current_head` |
+| `review_incomplete` | `agent` only: the tool ran and replied that it could not finish the review | 5 | |
 
 `review.js --help` and `review.js <command> --help` print usage and exit 0.
 
@@ -112,6 +114,57 @@ GitHub requests, all with the installation token:
 2. `GET /repos/{owner}/{repo}/pulls/{pr}/files?per_page=100&page={n}`, until a page has fewer than 100 files
 3. `GET /repos/{owner}/{repo}/pulls/{pr}` with `Accept: application/vnd.github.diff`
 4. `POST /graphql` with the `reviewThreads` query, 100 threads a page, until `hasNextPage` is false
+
+## agent
+
+```sh
+review.js agent <cursor|opencode> --workdir <dir> [--model <id>] [--variant <effort>] [--method-file <file>] [--timeout <seconds>] [--print-prompt]
+```
+
+| Flag | Meaning |
+|---|---|
+| `cursor` or `opencode` | The tool that reads the diff: Cursor's agent, `cursor-agent`, or OpenCode, `opencode`. It must be on PATH and signed in |
+| `--workdir <dir>` | The workdir gather printed |
+| `--model <id>` | The model. Default: `auto` for cursor, which lets Cursor pick, and `opencode/deepseek-v4.1-flash-free` for opencode |
+| `--variant <effort>` | opencode only: the reasoning effort. Default: `max` |
+| `--method-file <file>` | The review method. Default: the skill's `SKILL.md` |
+| `--timeout <seconds>` | How long the tool may run. Default: `1800`. At the limit agent kills the tool and returns, even if a process the tool started still runs |
+| `--print-prompt` | Print the prompt and stop. Runs no tool and changes no file |
+
+agent has a different model review the code than the one that wrote it. It reads `state.json` from the workdir and builds one prompt: the method file in full, then how this run differs from it, then the output contract. The tool reads the diff, the workdir files and the repository, and replies with one JSON object, `{"findings": [...], "suspicions": [...]}` or `{"error": "<what stopped it>"}`. agent never posts.
+
+The tool runs in `worktree`, or `repo_root` when gather made no worktree, or the current directory. A worktree must be at `head_sha`: gather falls back to `FETCH_HEAD` when it cannot check out the head commit, and agent then refuses with `bad_input`. `PWD` is set to that directory too, because opencode reads its directory from `PWD`. It runs read-only:
+
+| Tool | How it runs |
+|---|---|
+| cursor | `cursor-agent --model <id> --mode ask --trust --print --output-format json --workspace <dir>`, with `--add-dir <workdir>` when the workdir is outside the workspace. Ask mode cannot edit files. cursor-agent loads project config from the workspace, even in ask mode, and nothing turns that off: hooks in `.cursor/hooks.json` and `.claude/settings.json` run programs, and `.cursor/cli.json` can allow shell commands. So agent does not start it when the workspace has `.claude/settings.json`, `.claude/settings.local.json`, `.claude/plugins`, or any entry in `.cursor/` other than `rules` and `mcp.json`, and fails with `agent_error` |
+| opencode | `opencode run --standalone --model <id>#<effort> --format json`, with a permission config in `OPENCODE_CONFIG_CONTENT` and `OPENCODE_DISABLE_PROJECT_CONFIG=1`, so an `opencode.json` or `.opencode/` plugin in the pull request cannot add to the config. The config allows only the read, grep, glob and list tools, held to paths in the workspace and the workdir, and denies every other tool instead of asking. There is no shell: OpenCode checks each command of a shell line on its own, so no set of shell rules kept writes out, and its `execute` tool runs JavaScript with network access. Without a shell or `gh`, opencode can read the code only from gather's `head/`, so without it agent refuses with `bad_input` |
+
+Read-only means the tool cannot write: no edits, no commits, no posts. It can still read any file you can. Cursor's ask mode reads outside the workspace, and opencode's read tool follows a symlink out of the workspace. A local review in your AI tool can do the same. The code under review can therefore try to make the reading tool copy a local file, such as the App's private key, into a finding, and `post` would publish it. Keep that in mind before you review an untrusted pull request on a machine that holds secrets.
+
+agent looks for the review object in the tool's final message. Only the last fenced block counts, labelled `json` in any case or not labelled: agent tries it with each closing fence after it, from the last to the first, so a finding body that holds a fence of its own does not cut it short. If that block holds no review object, the run fails with `agent_error`. agent never falls back to an earlier block, which may be an example. It tries the whole message only when there is no fenced block. An `error` that is not `null` ends the run with `review_incomplete`, whatever else the object holds. It changes the case of `severity`, `side` and `start_side` to upper case, turns a `line` or `start_line` given as a string of digits into a number, and drops a `line`, `start_line`, `side` or `start_side` that is `null`. Then it runs `post`'s checks on every row, and on the anchors of the P0, P1 and P2 findings against `diff.patch` when the workdir has one. A row or an anchor they refuse fails the run with `agent_error`, so the files it writes always pass them.
+
+Before anything else, unless `--print-prompt` is given, agent deletes `findings.json` and `suspicions.json` from the workdir. On success it writes both, each a JSON array, so `[]` means the tool finished the review and found nothing. It writes `suspicions.json` first and removes both if either write fails. On any failure it leaves neither, so a failed run cannot be posted as an all-clear.
+
+On success, agent prints this JSON object, indented by two spaces, followed by a newline:
+
+```json
+{
+  "repo": "Mizanic/mizcode-reviewer",
+  "pr": 36,
+  "head_sha": "1e43c532b81527f0c71614b8220c3ea8436710d9",
+  "tool": "opencode",
+  "model": "opencode/deepseek-v4.1-flash-free",
+  "variant": "max",
+  "findings_file": "/tmp/mizcode-review-36-AbC123/findings.json",
+  "suspicions_file": "/tmp/mizcode-review-36-AbC123/suspicions.json",
+  "findings_count": 1,
+  "suspicions_count": 0,
+  "signed_by": "OpenCode/Deepseek-V4.1-Flash"
+}
+```
+
+`variant` is there only for opencode. `signed_by` is the label to pass to `post --signed-by`: the tool's name and the model, without the vendor or provider prefix, the `-free` tier, or the effort and speed suffixes Cursor puts in its model IDs. `auto` gives `Cursor/Auto`, and `gpt-5.6-sol-xhigh` gives `Cursor/GPT-5.6-Sol`.
 
 ## post
 

@@ -393,6 +393,22 @@ Then respond with:
 
 Do not repeat inline-comment bodies or publish the private candidate ledger.
 
+## Have Cursor or OpenCode read the diff
+
+For a review by a different model than the one that wrote the code, run one
+command after step 1 in place of steps 2 to 7:
+
+```bash
+node <skill>/scripts/review.js agent cursor --workdir <workdir>     # Cursor's agent
+node <skill>/scripts/review.js agent opencode --workdir <workdir>   # OpenCode
+```
+
+It runs the tool read-only with this file as the method, and writes
+`findings.json` and `suspicions.json` in the workdir. Post them in step 8 with
+`--signed-by` set to the `signed_by` it prints. If it exits non-zero there is
+no review: post nothing. Exit 5, `review_incomplete`, means the tool could not
+finish. Run it again or review in this session.
+
 ## References
 
 - [Severity scale and the P0 and P1 shapes](references/severity.md)
