@@ -128,7 +128,7 @@ review.js agent <cursor|opencode> --workdir <dir> [--model <id>] [--variant <eff
 | `--model <id>` | The model. Default: `auto` for cursor, which lets Cursor pick, and `opencode/deepseek-v4.1-flash-free` for opencode |
 | `--variant <effort>` | opencode only: the reasoning effort. Default: `max` |
 | `--method-file <file>` | The review method. Default: the skill's `SKILL.md` |
-| `--timeout <seconds>` | How long the tool may run. Default: `1800` |
+| `--timeout <seconds>` | How long the tool may run. Default: `1800`. At the limit agent kills the tool and returns, even if a process the tool started still runs |
 | `--print-prompt` | Print the prompt and stop. Runs no tool and changes no file |
 
 agent has a different model review the code than the one that wrote it. It reads `state.json` from the workdir and builds one prompt: the method file in full, then how this run differs from it, then the output contract. The tool reads the diff, the workdir files and the repository, and replies with one JSON object, `{"findings": [...], "suspicions": [...]}` or `{"error": "<what stopped it>"}`. agent never posts.

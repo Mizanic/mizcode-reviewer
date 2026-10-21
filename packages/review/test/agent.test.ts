@@ -55,6 +55,8 @@ interface Fake {
   sleep?: number;
   // A directory the fake makes before it replies.
   mkdir?: string;
+  // Seconds a child of the fake runs with the fake's stdout.
+  grandchild?: number;
 }
 
 // A fake cursor-agent or opencode on PATH. It records its argv, cwd, stdin
@@ -77,6 +79,7 @@ process.stdin.on("end", () => {
     noProjectConfig: process.env.OPENCODE_DISABLE_PROJECT_CONFIG ?? null,
   }));
   if (fake.mkdir) fs.mkdirSync(fake.mkdir);
+  if (fake.grandchild) require("node:child_process").spawn("sleep", [String(fake.grandchild)], { stdio: "inherit" });
   setTimeout(() => {
     process.stdout.write(fake.stdout);
     if (fake.stderr) process.stderr.write(fake.stderr);
@@ -331,6 +334,17 @@ describe("agent cursor", () => {
     expect(code).toBe(1);
     expect(error).toEqual({ error: "agent_error", message: "cursor-agent did not finish within 1 seconds." });
     expect(written(workdir).findings).toBeUndefined();
+  });
+
+  it("ends at --timeout even when a child of the tool holds stdout open", async () => {
+    const { workdir } = staged();
+    const { env } = fakeTool("cursor-agent", { stdout: "", sleep: 30, grandchild: 30 });
+    const started = Date.now();
+    const { code, error } = await agent(["cursor", "--workdir", workdir, "--method-file", method, "--timeout", "1"], env);
+
+    expect(code).toBe(1);
+    expect(error?.message).toBe("cursor-agent did not finish within 1 seconds.");
+    expect(Date.now() - started).toBeLessThan(10_000);
   });
 
   it("exits 1 when the tool is not on PATH", async () => {

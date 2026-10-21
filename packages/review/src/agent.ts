@@ -335,9 +335,20 @@ function runTool(executable: string, argv: string[], input: string, cwd: string,
       clearTimeout(timer);
       fail(error);
     });
-    child.on("close", (code) => {
+    const finish = (code: number | null) => {
       clearTimeout(timer);
       done({ code, stdout: Buffer.concat(stdout).toString("utf8"), stderr: Buffer.concat(stderr).toString("utf8"), timedOut });
+    };
+    // After a timeout, the exit is enough. A process the tool started can
+    // still hold stdout open, and close would wait for it.
+    child.on("exit", (code) => {
+      if (!timedOut) return;
+      child.stdout.destroy();
+      child.stderr.destroy();
+      finish(code);
+    });
+    child.on("close", (code) => {
+      if (!timedOut) finish(code);
     });
     child.stdin.end(input, "utf8");
   });
