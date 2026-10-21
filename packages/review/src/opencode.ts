@@ -2,10 +2,14 @@
 // reply, and the label post signs with.
 //
 // OpenCode has no read-only switch that still allows a shell, so the run
-// carries its own permission config: no edits, no web, no paths outside the
-// workspace and workdir, and only the shell commands a review reads with.
-// Every other command is denied, never asked, so a run with no one at the
-// keyboard cannot wait on an approval prompt.
+// carries its own permission config: no edits, no web, file tools held to
+// paths in the workspace and workdir, and only the shell commands a review
+// reads with. Every other command is denied, never asked, so a run with no one
+// at the keyboard cannot wait on an approval prompt.
+//
+// The config stops writes, not reads. A shell command takes any path, and the
+// read tool follows a symlink out of the workspace, so the run can read any
+// file the user can, as a local review can.
 
 import type { AgentRun, Tool } from "./agent.js";
 import { AgentFailed } from "./config.js";
