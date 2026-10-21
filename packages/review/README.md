@@ -133,7 +133,7 @@ review.js agent <cursor|opencode> --workdir <dir> [--model <id>] [--variant <eff
 
 agent has a different model review the code than the one that wrote it. It reads `state.json` from the workdir and builds one prompt: the method file in full, then how this run differs from it, then the output contract. The tool reads the diff, the workdir files and the repository, and replies with one JSON object, `{"findings": [...], "suspicions": [...]}` or `{"error": "<what stopped it>"}`. agent never posts.
 
-The tool runs in `worktree`, or `repo_root` when gather made no worktree, or the current directory. `PWD` is set to that directory too, because opencode reads its directory from `PWD`. It runs read-only:
+The tool runs in `worktree`, or `repo_root` when gather made no worktree, or the current directory. A worktree must be at `head_sha`: gather falls back to `FETCH_HEAD` when it cannot check out the head commit, and agent then refuses with `bad_input`. `PWD` is set to that directory too, because opencode reads its directory from `PWD`. It runs read-only:
 
 | Tool | How it runs |
 |---|---|

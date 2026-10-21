@@ -14,6 +14,7 @@ import { delimiter, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { AgentFailed, BadInput, ReviewIncomplete } from "./config.js";
+import { git } from "./git.js";
 import { cursor } from "./cursor.js";
 import { opencode } from "./opencode.js";
 import { checkAnchors, parseFindings, parseSuspicions, splitFindings } from "./post.js";
@@ -433,8 +434,17 @@ export async function agent(argv: string[], options: RunOptions): Promise<string
   // finds the workdir in arguments the strict one would refuse.
   const loose = parseArgs({ args: argv, options: OPTIONS, strict: false, allowPositionals: true }).values;
   if (typeof loose.workdir === "string" && loose.workdir !== "" && !loose["print-prompt"] && !loose.help) {
-    await rm(join(resolve(cwd, loose.workdir), "findings.json"), { force: true });
-    await rm(join(resolve(cwd, loose.workdir), "suspicions.json"), { force: true });
+    for (const name of ["findings.json", "suspicions.json"]) {
+      const path = join(resolve(cwd, loose.workdir), name);
+      try {
+        await rm(path, { force: true });
+      } catch (error) {
+        // A workdir that is a file has nothing to delete. readState says so.
+        if ((error as NodeJS.ErrnoException).code !== "ENOTDIR") {
+          throw new BadInput(`Could not delete ${path}: ${withoutPeriod((error as Error).message)}.`);
+        }
+      }
+    }
   }
 
   const args = readArgs(argv, cwd);
@@ -444,6 +454,16 @@ export async function agent(argv: string[], options: RunOptions): Promise<string
   const suspicionsFile = join(workdir, "suspicions.json");
 
   const state = await readState(workdir);
+  // gather falls back to FETCH_HEAD when it cannot check out head_sha, and
+  // only notes it. The prompt calls head/ the reviewed commit, and post
+  // anchors at head_sha, so the two must agree.
+  if (state.worktree) {
+    const head = await git(["rev-parse", "HEAD"], state.worktree);
+    if (head.code !== 0 || head.stdout.trim() !== state.headSha) {
+      const at = head.code === 0 ? `is at ${head.stdout.trim()}` : `could not be read (${withoutPeriod(head.stderr.trim())})`;
+      throw new BadInput(`The worktree ${state.worktree} ${at}, not the reviewed commit ${state.headSha}. Run gather again.`);
+    }
+  }
   if (tool.needsWorktree && !state.worktree) {
     throw new BadInput(
       `${tool.name} reads the code only from gather's head/ worktree, and ${workdir} has none. Run gather from a clone of ${state.repo}.`,

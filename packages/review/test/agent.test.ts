@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { extractObject, normalise } from "../src/agent.js";
 import { prettyModel } from "../src/cursor.js";
 import { TOOLS_NOTE, opencodeLabel, opencodeReply } from "../src/opencode.js";
-import { newDir, run } from "./helpers.js";
+import { newDir, run, sh } from "./helpers.js";
 
 const sha = "1e43c532b81527f0c71614b8220c3ea8436710d9";
 
@@ -29,17 +29,22 @@ const finding = {
 };
 const suspicion = { path: "src/auth.ts", line: 42, consequence: "Every admin is locked out.", check: "Log one claim." };
 
-// A workdir as gather leaves it, with a head/ worktree directory.
+// A workdir as gather leaves it, with head/ a git checkout of head_sha.
 function staged(state: Record<string, unknown> = {}) {
   const workdir = newDir("workdir");
   const worktree = join(workdir, "head");
   mkdirSync(worktree);
+  sh(["init", "--quiet"], worktree);
+  writeFileSync(join(worktree, "app.ts"), "export const a = 1;\n");
+  sh(["add", "app.ts"], worktree);
+  sh(["commit", "--quiet", "-m", "head"], worktree);
+  const headSha = sh(["rev-parse", "HEAD"], worktree);
   writeFileSync(
     join(workdir, "state.json"),
-    JSON.stringify({ repo: "acme/widgets", pr: 7, head_sha: sha, base: "main", workdir, worktree, repo_root: "/repo", ...state }),
+    JSON.stringify({ repo: "acme/widgets", pr: 7, head_sha: headSha, base: "main", workdir, worktree, repo_root: "/repo", ...state }),
   );
   writeFileSync(join(workdir, "diff.patch"), diffText);
-  return { workdir, worktree };
+  return { workdir, worktree, headSha };
 }
 
 const method = (() => {
@@ -118,7 +123,7 @@ function written(workdir: string) {
 
 describe("agent cursor", () => {
   it("writes findings.json and suspicions.json and prints the label", async () => {
-    const { workdir, worktree } = staged();
+    const { workdir, worktree, headSha } = staged();
     const { env, recorded } = fakeTool("cursor-agent", {
       stdout: cursorEnvelope(fenced({ findings: [finding], suspicions: [suspicion] })),
     });
@@ -129,7 +134,7 @@ describe("agent cursor", () => {
     expect(JSON.parse(stdout)).toEqual({
       repo: "acme/widgets",
       pr: 7,
-      head_sha: sha,
+      head_sha: headSha,
       tool: "cursor",
       model: "auto",
       findings_file: join(workdir, "findings.json"),
@@ -148,7 +153,7 @@ describe("agent cursor", () => {
     ]);
     expect(call.cwd).toBe(worktree);
     expect(call.input).toContain("THE REVIEW METHOD");
-    expect(call.input).toContain(`acme/widgets#7 at commit ${sha}`);
+    expect(call.input).toContain(`acme/widgets#7 at commit ${headSha}`);
     expect(call.input).not.toContain("## Shell in this run");
   });
 
@@ -356,6 +361,26 @@ describe("agent cursor", () => {
     expect(code).toBe(1);
     expect(error?.message).toBe("cursor-agent did not finish within 1 seconds.");
     expect(Date.now() - started).toBeLessThan(10_000);
+  });
+
+  it("refuses a worktree that is not at head_sha", async () => {
+    const { workdir, worktree } = staged({ head_sha: sha });
+    const { env } = fakeTool("cursor-agent", { stdout: cursorEnvelope(fenced({ findings: [] })) });
+    const { code, error } = await agent(["cursor", "--workdir", workdir, "--method-file", method], env);
+
+    expect(code).toBe(2);
+    expect(error?.error).toBe("bad_input");
+    expect(String(error?.message)).toContain(`The worktree ${worktree} is at `);
+    expect(String(error?.message)).toContain(`not the reviewed commit ${sha}. Run gather again.`);
+  });
+
+  it("reports bad_input when the workdir is a file", async () => {
+    const file = join(newDir("file"), "not-a-dir");
+    writeFileSync(file, "");
+    const { code, error } = await agent(["cursor", "--workdir", file], {});
+
+    expect(code).toBe(2);
+    expect(String(error?.message)).toContain(`Could not read ${join(file, "state.json")}`);
   });
 
   it("exits 1 when the tool is not on PATH", async () => {
