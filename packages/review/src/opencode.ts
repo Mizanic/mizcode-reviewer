@@ -1,15 +1,21 @@
 // How review.js agent runs OpenCode: its argv, its permission config, its
 // reply, and the label post signs with.
 //
-// OpenCode has no read-only switch that still allows a shell, so the run
-// carries its own permission config: no edits, no web, file tools held to
-// paths in the workspace and workdir, and only the shell commands a review
-// reads with. Every other command is denied, never asked, so a run with no one
-// at the keyboard cannot wait on an approval prompt.
+// OpenCode has no read-only switch, so the run carries its own permission
+// config. It allows only the read, grep, glob and list tools, held to paths in
+// the workspace and workdir, and denies every other tool, never asks, so a run
+// with no one at the keyboard cannot wait on an approval prompt.
 //
-// The config stops writes, not reads. A shell command takes any path, and the
-// read tool follows a symlink out of the workspace, so the run can read any
-// file the user can, as a local review can.
+// There is no shell. OpenCode checks each simple command of a shell line on
+// its own, so pattern rules could not keep writes out: review found
+// git difftool -x, gh api -if and --hostname, rg --hostname-bin and
+// "git log | head > f" in turn. The execute tool runs JavaScript with network
+// access whatever webfetch says. An allow-list also covers tools OpenCode adds
+// later.
+//
+// The config stops writes, not reads: the read tool follows a symlink out of
+// the workspace, so the run can read any file the user can, as a local review
+// can.
 
 import type { AgentRun, Tool } from "./agent.js";
 import { AgentFailed } from "./config.js";
@@ -21,56 +27,20 @@ const DEFAULT_MODEL = "opencode/deepseek-v4.1-flash-free";
 // overrides it.
 export const DEFAULT_VARIANT = "max";
 
-// OpenCode checks the rules in order and the last match wins, so the denials
-// after the allowances take the write forms back out of them. gh is not
-// allowed at all: a pattern cannot keep a write or another host out of a
-// gh api command, since flags such as -if or --hostname can sit anywhere in
-// it. So the run reads the code from head/ only, and needs one. A rule's * is any
-// text, and the rule must match the whole command. Each command is allowed as
-// itself and followed by a space, never as a prefix: "git diff*" would also
-// allow "git difftool -x <program>".
-const READ_COMMANDS = [
-  "git log",
-  "git show",
-  "git blame",
-  "git diff",
-  "git status",
-  "git ls-files",
-  "git rev-parse",
-  "rg",
-  "grep",
-  "ls",
-  "cat",
-  "head",
-  "tail",
-  "wc",
-  "echo",
-];
-
-export const READ_ONLY_BASH: Record<string, "allow" | "deny"> = {
-  "*": "deny",
-  ...Object.fromEntries(READ_COMMANDS.flatMap((command) => [[command, "allow"], [`${command} *`, "allow"]])),
-  // Redirection and --output write files. rg --pre and --hostname-bin run
-  // a program.
-  "*>*": "deny",
-  "*--output*": "deny",
-  "rg *--pre*": "deny",
-  "rg *--hostname-bin*": "deny",
-};
+// The only tools the run has. The rest, the shell and execute among them,
+// are denied by "*".
+export const READ_TOOLS = ["read", "grep", "glob", "list"];
 
 // Added to the prompt. A model that cannot read the code and reports nothing
-// has written a false all-clear, so a denied read must end in an error.
-export const SHELL_NOTE = `
-## Shell in this run
+// has written a false all-clear, so a read it cannot make must end in an error.
+export const TOOLS_NOTE = `
+## Tools in this run
 
-The shell is restricted to read-only commands: \`git log\`, \`git show\`,
-\`git blame\`, \`git diff\`, \`git status\`, \`git ls-files\`, \`git rev-parse\`, \`rg\`,
-\`grep\`, \`ls\`, \`cat\`, \`head\`, \`tail\`, \`wc\` and \`echo\`. Pipes between
-them work. Anything else is denied, as are \`;\`, \`&&\`, redirection and \`gh\`.
-Run one command per call.
+You have only the read, grep, glob and list tools. There is no shell, no git
+and no network, so the guidance above about \`git log\`, \`git blame\` and \`rg\`
+does not apply: use grep for searches, and diff.patch for what changed.
 
-If a denial leaves you unable to read code the review needs, retry with an
-allowed form or with your read tool. If you still cannot read it, return
+If you cannot read code the review needs, return
 \`{"error": "<what you could not read>"}\`. Never return an empty review for code
 you did not read.
 `;
@@ -78,11 +48,9 @@ you did not read.
 export function permissionConfig(workdir: string) {
   return {
     permission: {
-      edit: "deny",
-      webfetch: "deny",
-      websearch: "deny",
+      "*": "deny",
+      ...Object.fromEntries(READ_TOOLS.map((tool) => [tool, "allow"])),
       external_directory: { "*": "deny", [`${workdir}/*`]: "allow" },
-      bash: READ_ONLY_BASH,
     },
   };
 }
@@ -165,7 +133,7 @@ export const opencode: Tool = {
   defaultModel: DEFAULT_MODEL,
   defaultVariant: DEFAULT_VARIANT,
   needsWorktree: true,
-  promptNote: SHELL_NOTE,
+  promptNote: TOOLS_NOTE,
   label: opencodeLabel,
   invocation(run: AgentRun) {
     return {
