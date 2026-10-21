@@ -175,12 +175,17 @@ ${OUTPUT_CONTRACT}${note}`;
 }
 
 const FENCE = /```(?:json)?\s*\n([\s\S]*?)```/g;
+const OUTER_FENCE = /```(?:json)?\s*\n([\s\S]*)```/;
 
 // The review object in the tool's final message. Fenced blocks are tried last
 // first: a model that restates the schema before it answers puts the real
-// object in the later block.
+// object in the later block. Then the text from the first opening fence to the
+// last closing one, for a finding body that holds a fence of its own, which
+// ends the shorter match early. Then the whole message.
 export function extractObject(text: string): Record<string, unknown> {
   const candidates = [...text.matchAll(FENCE)].map((match) => match[1] as string).reverse();
+  const outer = OUTER_FENCE.exec(text);
+  if (outer) candidates.push(outer[1] as string);
   candidates.push(text);
   for (const blob of candidates) {
     let value: unknown;
@@ -205,8 +210,11 @@ function toLine(value: unknown): unknown {
 // string, a suspicion line given as null. Then post's own checks run, so a
 // row they would refuse fails here, before anything is written.
 export function normalise(reply: Record<string, unknown>): { findings: unknown[]; suspicions: unknown[] } {
-  if (typeof reply.error === "string" && reply.error.trim() !== "") {
-    throw new ReviewIncomplete(`The tool could not complete the review: ${reply.error.trim()}`);
+  // Any error but null, whatever its type: {"error": true, "findings": []}
+  // is not an all-clear.
+  if (reply.error !== undefined && reply.error !== null) {
+    const reason = typeof reply.error === "string" ? reply.error.trim() : JSON.stringify(reply.error);
+    throw new ReviewIncomplete(`The tool could not complete the review: ${reason || "it gave no reason"}`);
   }
   const findings = reply.findings ?? [];
   const suspicions = reply.suspicions ?? [];

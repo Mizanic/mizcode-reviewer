@@ -18,25 +18,32 @@ const DEFAULT_MODEL = "opencode/deepseek-v4.1-flash-free";
 export const DEFAULT_VARIANT = "max";
 
 // OpenCode checks the rules in order and the last match wins, so the denials
-// after the allowances take the write forms back out of them.
+// after the allowances take the write forms back out of them. A rule's * is any
+// text, and the rule must match the whole command. Each command is allowed as
+// itself and followed by a space, never as a prefix: "git diff*" would also
+// allow "git difftool -x <program>".
+const READ_COMMANDS = [
+  "git log",
+  "git show",
+  "git blame",
+  "git diff",
+  "git status",
+  "git ls-files",
+  "git rev-parse",
+  "rg",
+  "grep",
+  "ls",
+  "cat",
+  "head",
+  "tail",
+  "wc",
+  "base64 -d",
+  "echo",
+];
+
 export const READ_ONLY_BASH: Record<string, "allow" | "deny"> = {
   "*": "deny",
-  "git log*": "allow",
-  "git show*": "allow",
-  "git blame*": "allow",
-  "git diff*": "allow",
-  "git status*": "allow",
-  "git ls-files*": "allow",
-  "git rev-parse*": "allow",
-  "rg *": "allow",
-  "grep *": "allow",
-  "ls*": "allow",
-  "cat *": "allow",
-  "head *": "allow",
-  "tail *": "allow",
-  "wc *": "allow",
-  "base64 -d*": "allow",
-  "echo *": "allow",
+  ...Object.fromEntries(READ_COMMANDS.flatMap((command) => [[command, "allow"], [`${command} *`, "allow"]])),
   "gh api repos/*": "allow",
   'gh api "repos/*': "allow",
   "gh api 'repos/*": "allow",
@@ -48,8 +55,9 @@ export const READ_ONLY_BASH: Record<string, "allow" | "deny"> = {
   // with GET.
   "gh api * -X*": "deny",
   "gh api * --method*": "deny",
-  "gh api * -f *": "deny",
-  "gh api * -F *": "deny",
+  // -f and -F with the value attached too, as in -fbody=hi.
+  "gh api * -f*": "deny",
+  "gh api * -F*": "deny",
   "gh api * --field*": "deny",
   "gh api * --raw-field*": "deny",
   "gh api * --input*": "deny",
@@ -168,7 +176,13 @@ export const opencode: Tool = {
       // --standalone starts a private server, so this run's permission config
       // is the one in force, not whatever a background server loaded.
       argv: ["run", "--standalone", "--model", `${run.model}#${run.variant}`, "--format", "json"],
-      env: { OPENCODE_CONFIG_CONTENT: JSON.stringify(permissionConfig(run.workdir)) },
+      env: {
+        OPENCODE_CONFIG_CONTENT: JSON.stringify(permissionConfig(run.workdir)),
+        // The workspace is the pull request's head. Without this, an
+        // opencode.json the pull request adds is loaded and merged with the
+        // config above, so the change under review could allow itself more.
+        OPENCODE_DISABLE_PROJECT_CONFIG: "1",
+      },
     };
   },
   reply: opencodeReply,

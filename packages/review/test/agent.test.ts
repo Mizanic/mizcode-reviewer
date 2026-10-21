@@ -74,6 +74,7 @@ process.stdin.on("data", (chunk) => (input += chunk));
 process.stdin.on("end", () => {
   fs.writeFileSync(${JSON.stringify(record)}, JSON.stringify({
     argv: process.argv.slice(2), cwd: process.cwd(), pwd: process.env.PWD, input, config: process.env.OPENCODE_CONFIG_CONTENT ?? null,
+    noProjectConfig: process.env.OPENCODE_DISABLE_PROJECT_CONFIG ?? null,
   }));
   if (fake.mkdir) fs.mkdirSync(fake.mkdir);
   setTimeout(() => {
@@ -88,7 +89,7 @@ process.stdin.on("end", () => {
   // The fake must not shadow the real tool by accident, and must find node.
   const env = { ...process.env, PATH: `${dir}${delimiter}${process.env.PATH ?? ""}` };
   const recorded = () =>
-    JSON.parse(readFileSync(record, "utf8")) as { argv: string[]; cwd: string; pwd: string; input: string; config: string | null };
+    JSON.parse(readFileSync(record, "utf8")) as { argv: string[]; cwd: string; pwd: string; input: string; config: string | null; noProjectConfig: string | null };
   return { env, recorded };
 }
 
@@ -328,6 +329,8 @@ describe("agent opencode", () => {
     expect(call.cwd).toBe(worktree);
     // opencode reads its directory from PWD.
     expect(call.pwd).toBe(worktree);
+    // The pull request's own opencode.json must not widen the permissions.
+    expect(call.noProjectConfig).toBe("1");
     expect(call.input).toContain("THE REVIEW METHOD");
     expect(call.input.endsWith(SHELL_NOTE)).toBe(true);
     const permission = JSON.parse(call.config as string).permission;
@@ -431,6 +434,12 @@ describe("extractObject", () => {
     expect(extractObject(reply)).toEqual({ findings: [] });
   });
 
+  it("reads a block whose finding body holds a fence of its own", () => {
+    const body = "Use ```ts\nconst a = 1;\n``` instead.";
+    const reply = `Review:\n${fenced({ findings: [{ ...finding, body }] })}\n`;
+    expect(extractObject(reply)).toEqual({ findings: [{ ...finding, body }] });
+  });
+
   it("accepts an unfenced object and prose around a block", () => {
     expect(extractObject('{"findings": []}')).toEqual({ findings: [] });
     expect(extractObject(`I reviewed it.\n\n${fenced({ suspicions: [] })}\n\nDone.`)).toEqual({ suspicions: [] });
@@ -453,6 +462,14 @@ describe("normalise", () => {
     const rest: Record<string, unknown> = { ...finding };
     delete rest.side;
     expect(normalise({ findings: [{ ...rest }] }).findings).toEqual([rest]);
+  });
+
+  it.each([true, "", "  ", { message: "out of context" }, 0, false])("treats error %j as an incomplete review", (error) => {
+    expect(() => normalise({ error, findings: [] })).toThrow("could not complete the review");
+  });
+
+  it("treats a null error as no error", () => {
+    expect(normalise({ error: null, findings: [] })).toEqual({ findings: [], suspicions: [] });
   });
 
   it("puts the error first, ahead of an empty findings array", () => {
@@ -502,10 +519,46 @@ describe("opencode permissions", () => {
     // The last matching rule wins.
     const keys = Object.keys(READ_ONLY_BASH);
     const lastAllow = Math.max(...keys.map((key, i) => (READ_ONLY_BASH[key] === "allow" ? i : -1)));
-    for (const pattern of ["*>*", "*--output*", "gh api * -X*", "gh api * -f *", "gh api * --input*"]) {
+    for (const pattern of ["*>*", "*--output*", "gh api * -X*", "gh api * -f*", "gh api * -F*", "gh api * --input*"]) {
       expect(READ_ONLY_BASH[pattern]).toBe("deny");
       expect(keys.indexOf(pattern)).toBeGreaterThan(lastAllow);
     }
+  });
+
+  // OpenCode's matcher: * is any text, the rule matches the whole command,
+  // and the last matching rule wins.
+  function decide(command: string): string | undefined {
+    let decision: string | undefined;
+    for (const [pattern, action] of Object.entries(READ_ONLY_BASH)) {
+      const regex = new RegExp(`^${pattern.split("*").map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join(".*")}$`, "s");
+      if (regex.test(command)) decision = action;
+    }
+    return decision;
+  }
+
+  it.each([
+    ["git diff", "allow"],
+    ["git diff HEAD~1 -- src/app.ts", "allow"],
+    ["git log --oneline -5", "allow"],
+    ["git show HEAD:src/app.ts", "allow"],
+    ["ls", "allow"],
+    ["ls -la src", "allow"],
+    ["rg -n tenantId src", "allow"],
+    [`gh api "repos/o/r/contents/src/app.ts?ref=${sha}" --jq .content`, "allow"],
+    ["git difftool -y -x 'sh -c id' HEAD~1", "deny"],
+    ["git diff-tree -r HEAD", "deny"],
+    ["lsof -p 1", "deny"],
+    ["rg --pre ./run.sh x", "deny"],
+    ["git log --output=/tmp/x", "deny"],
+    ["cat a > b", "deny"],
+    ["gh api repos/o/r/issues -fbody=hi", "deny"],
+    ["gh api repos/o/r/issues -Fbody=hi", "deny"],
+    ["gh api repos/o/r/issues -f body=hi", "deny"],
+    ["gh api repos/o/r/issues --method POST", "deny"],
+    ["gh api repos/o/r/issues -XPOST", "deny"],
+    ["sh -c id", "deny"],
+  ])("decides %j as %s", (command, decision) => {
+    expect(decide(command)).toBe(decision);
   });
 
   it("allows the quoted gh api read the prompt prints", () => {
