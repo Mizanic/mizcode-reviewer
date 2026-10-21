@@ -347,6 +347,17 @@ describe("agent cursor", () => {
     expect(Date.now() - started).toBeLessThan(10_000);
   });
 
+  it("ends at --timeout when the tool exited but a child of it holds stdout open", async () => {
+    const { workdir } = staged();
+    const { env } = fakeTool("cursor-agent", { stdout: "", grandchild: 30 });
+    const started = Date.now();
+    const { code, error } = await agent(["cursor", "--workdir", workdir, "--method-file", method, "--timeout", "1"], env);
+
+    expect(code).toBe(1);
+    expect(error?.message).toBe("cursor-agent did not finish within 1 seconds.");
+    expect(Date.now() - started).toBeLessThan(10_000);
+  });
+
   it("exits 1 when the tool is not on PATH", async () => {
     const { workdir } = staged();
     const { code, error } = await agent(["cursor", "--workdir", workdir, "--method-file", method], { PATH: newDir("empty") });

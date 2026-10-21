@@ -322,9 +322,24 @@ function runTool(executable: string, argv: string[], input: string, cwd: string,
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
     let timedOut = false;
+    let exited = false;
+    let exitCode: number | null = null;
+    let settled = false;
+    const finish = (code: number | null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      child.stdout.destroy();
+      child.stderr.destroy();
+      done({ code, stdout: Buffer.concat(stdout).toString("utf8"), stderr: Buffer.concat(stderr).toString("utf8"), timedOut });
+    };
+    // At the limit agent returns on the tool's exit, not on stdout closing:
+    // a process the tool started can hold stdout open long after the tool
+    // itself is gone.
     const timer = setTimeout(() => {
       timedOut = true;
-      child.kill("SIGKILL");
+      if (exited) finish(exitCode);
+      else child.kill("SIGKILL");
     }, timeout * 1000);
     child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
     child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
@@ -332,24 +347,18 @@ function runTool(executable: string, argv: string[], input: string, cwd: string,
     // says what happened, not the broken pipe.
     child.stdin.on("error", () => {});
     child.on("error", (error) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
       fail(error);
     });
-    const finish = (code: number | null) => {
-      clearTimeout(timer);
-      done({ code, stdout: Buffer.concat(stdout).toString("utf8"), stderr: Buffer.concat(stderr).toString("utf8"), timedOut });
-    };
-    // After a timeout, the exit is enough. A process the tool started can
-    // still hold stdout open, and close would wait for it.
     child.on("exit", (code) => {
-      if (!timedOut) return;
-      child.stdout.destroy();
-      child.stderr.destroy();
-      finish(code);
+      exited = true;
+      exitCode = code;
+      if (timedOut) finish(code);
     });
-    child.on("close", (code) => {
-      if (!timedOut) finish(code);
-    });
+    // Before the limit, wait for stdout to close, so no output is lost.
+    child.on("close", (code) => finish(code));
     child.stdin.end(input, "utf8");
   });
 }
