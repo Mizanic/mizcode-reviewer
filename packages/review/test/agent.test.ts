@@ -413,11 +413,16 @@ describe("agent arguments", () => {
     expect(existsSync(join(workdir, "findings.json"))).toBe(true);
   });
 
-  it("deletes findings from an earlier run even when the arguments are bad", async () => {
+  it.each([
+    ["no state.json", (workdir: string) => ["cursor", "--workdir", workdir]],
+    ["a bad --timeout", (workdir: string) => ["cursor", "--workdir", workdir, "--timeout", "0"]],
+    ["an unknown option", (workdir: string) => ["cursor", "--bogus", "--workdir", workdir]],
+    ["an unknown tool", (workdir: string) => ["claude", "--workdir", workdir]],
+  ])("deletes findings from an earlier run on %s", async (_, argv) => {
     const workdir = newDir("workdir");
     writeFileSync(join(workdir, "findings.json"), "[]");
     writeFileSync(join(workdir, "suspicions.json"), "[]");
-    const { code } = await agent(["cursor", "--workdir", workdir], {});
+    const { code } = await agent(argv(workdir), {});
 
     expect(code).toBe(2);
     expect(written(workdir)).toEqual({ findings: undefined, suspicions: undefined });
@@ -572,6 +577,8 @@ describe("opencode permissions", () => {
     ["git diff-tree -r HEAD", "deny"],
     ["lsof -p 1", "deny"],
     ["rg --pre ./run.sh x", "deny"],
+    ["rg --hyperlink-format default --hostname-bin ./run.sh x", "deny"],
+    ["rg --hostname-bin=./run.sh x", "deny"],
     ["git log --output=/tmp/x", "deny"],
     ["cat a > b", "deny"],
     ["gh api repos/o/r/issues -fbody=hi", "deny"],

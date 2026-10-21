@@ -391,18 +391,20 @@ function inside(child: string, parent: string): boolean {
 // Returns the text to print: the usage, the prompt, or the result as JSON.
 export async function agent(argv: string[], options: RunOptions): Promise<string> {
   const cwd = options.cwd ?? process.cwd();
+  // Findings from an earlier run must not survive a run that fails, even one
+  // that fails on its arguments, so they go before any check. A loose parse
+  // finds the workdir in arguments the strict one would refuse.
+  const loose = parseArgs({ args: argv, options: OPTIONS, strict: false, allowPositionals: true }).values;
+  if (typeof loose.workdir === "string" && loose.workdir !== "" && !loose["print-prompt"] && !loose.help) {
+    await rm(join(resolve(cwd, loose.workdir), "findings.json"), { force: true });
+    await rm(join(resolve(cwd, loose.workdir), "suspicions.json"), { force: true });
+  }
+
   const args = readArgs(argv, cwd);
   if ("help" in args) return AGENT_USAGE;
   const { tool, workdir, model, variant } = args;
-
-  // Findings from an earlier run must not survive a run that fails, even one
-  // that fails on its arguments.
   const findingsFile = join(workdir, "findings.json");
   const suspicionsFile = join(workdir, "suspicions.json");
-  if (!args.printPrompt) {
-    await rm(findingsFile, { force: true });
-    await rm(suspicionsFile, { force: true });
-  }
 
   const state = await readState(workdir);
   let method: string;

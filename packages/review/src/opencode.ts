@@ -47,10 +47,12 @@ export const READ_ONLY_BASH: Record<string, "allow" | "deny"> = {
   "gh api repos/*": "allow",
   'gh api "repos/*': "allow",
   "gh api 'repos/*": "allow",
-  // Redirection and --output write files. rg --pre runs a program.
+  // Redirection and --output write files. rg --pre and --hostname-bin run
+  // a program.
   "*>*": "deny",
   "*--output*": "deny",
   "rg *--pre*": "deny",
+  "rg *--hostname-bin*": "deny",
   // Each of these can make a gh api read a write, so each is denied, even
   // with GET.
   "gh api * -X*": "deny",
