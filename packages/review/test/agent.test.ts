@@ -548,6 +548,12 @@ describe("extractObject", () => {
     expect(extractObject(reply)).toEqual({ findings: [{ ...finding, body }] });
   });
 
+  it("prefers the last block with a fence in its body over an earlier example", () => {
+    const body = "Use ```ts\nconst a = 1;\n``` instead.";
+    const reply = `For example:\n${fenced({ findings: [] })}\nThe review:\n${fenced({ findings: [{ ...finding, body }] })}\n`;
+    expect(extractObject(reply)).toEqual({ findings: [{ ...finding, body }] });
+  });
+
   it("accepts an unfenced object and prose around a block", () => {
     expect(extractObject('{"findings": []}')).toEqual({ findings: [] });
     expect(extractObject(`I reviewed it.\n\n${fenced({ suspicions: [] })}\n\nDone.`)).toEqual({ suspicions: [] });

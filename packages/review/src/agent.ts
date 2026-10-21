@@ -180,18 +180,24 @@ ${source}
 ${OUTPUT_CONTRACT}${note}`;
 }
 
-const FENCE = /```(?:json)?\s*\n([\s\S]*?)```/g;
-const OUTER_FENCE = /```(?:json)?\s*\n([\s\S]*)```/;
+const OPENING_FENCE = /```(?:json)?[ \t]*\r?\n/g;
 
-// The review object in the tool's final message. Fenced blocks are tried last
-// first: a model that restates the schema before it answers puts the real
-// object in the later block. Then the text from the first opening fence to the
-// last closing one, for a finding body that holds a fence of its own, which
-// ends the shorter match early. Then the whole message.
+// The review object in the tool's final message. A finding body can hold a
+// code fence of its own, so a block cannot be cut at the first closing fence.
+// Instead each opening fence is tried from the last to the first, and with it
+// each closing fence after it, from the last to the first. The real answer is
+// the last block, so it is tried before a schema or example the model showed
+// earlier. Then the whole message.
 export function extractObject(text: string): Record<string, unknown> {
-  const candidates = [...text.matchAll(FENCE)].map((match) => match[1] as string).reverse();
-  const outer = OUTER_FENCE.exec(text);
-  if (outer) candidates.push(outer[1] as string);
+  const closings: number[] = [];
+  for (let at = text.indexOf("```"); at !== -1; at = text.indexOf("```", at + 3)) closings.push(at);
+  const candidates: string[] = [];
+  for (const opening of [...text.matchAll(OPENING_FENCE)].reverse()) {
+    const start = opening.index + opening[0].length;
+    for (const end of [...closings].reverse()) {
+      if (end >= start) candidates.push(text.slice(start, end));
+    }
+  }
   candidates.push(text);
   for (const blob of candidates) {
     let value: unknown;
