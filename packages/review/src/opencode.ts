@@ -18,7 +18,10 @@ const DEFAULT_MODEL = "opencode/deepseek-v4.1-flash-free";
 export const DEFAULT_VARIANT = "max";
 
 // OpenCode checks the rules in order and the last match wins, so the denials
-// after the allowances take the write forms back out of them. A rule's * is any
+// after the allowances take the write forms back out of them. gh is not
+// allowed at all: a pattern cannot keep a write or another host out of a
+// gh api command, since flags such as -if or --hostname can sit anywhere in
+// it. So the run reads the code from head/ only, and needs one. A rule's * is any
 // text, and the rule must match the whole command. Each command is allowed as
 // itself and followed by a space, never as a prefix: "git diff*" would also
 // allow "git difftool -x <program>".
@@ -37,32 +40,18 @@ const READ_COMMANDS = [
   "head",
   "tail",
   "wc",
-  "base64 -d",
   "echo",
 ];
 
 export const READ_ONLY_BASH: Record<string, "allow" | "deny"> = {
   "*": "deny",
   ...Object.fromEntries(READ_COMMANDS.flatMap((command) => [[command, "allow"], [`${command} *`, "allow"]])),
-  "gh api repos/*": "allow",
-  'gh api "repos/*': "allow",
-  "gh api 'repos/*": "allow",
   // Redirection and --output write files. rg --pre and --hostname-bin run
   // a program.
   "*>*": "deny",
   "*--output*": "deny",
   "rg *--pre*": "deny",
   "rg *--hostname-bin*": "deny",
-  // Each of these can make a gh api read a write, so each is denied, even
-  // with GET.
-  "gh api * -X*": "deny",
-  "gh api * --method*": "deny",
-  // -f and -F with the value attached too, as in -fbody=hi.
-  "gh api * -f*": "deny",
-  "gh api * -F*": "deny",
-  "gh api * --field*": "deny",
-  "gh api * --raw-field*": "deny",
-  "gh api * --input*": "deny",
 };
 
 // Added to the prompt. A model that cannot read the code and reports nothing
@@ -72,9 +61,9 @@ export const SHELL_NOTE = `
 
 The shell is restricted to read-only commands: \`git log\`, \`git show\`,
 \`git blame\`, \`git diff\`, \`git status\`, \`git ls-files\`, \`git rev-parse\`, \`rg\`,
-\`grep\`, \`ls\`, \`cat\`, \`head\`, \`tail\`, \`wc\`, \`echo\`, \`base64 -d\`, and
-\`gh api repos/...\` reads. Pipes between them work. Anything else is denied, as are \`;\`, \`&&\`,
-redirection, and any \`gh api\` write flag. Run one command per call.
+\`grep\`, \`ls\`, \`cat\`, \`head\`, \`tail\`, \`wc\` and \`echo\`. Pipes between
+them work. Anything else is denied, as are \`;\`, \`&&\`, redirection and \`gh\`.
+Run one command per call.
 
 If a denial leaves you unable to read code the review needs, retry with an
 allowed form or with your read tool. If you still cannot read it, return
@@ -171,6 +160,7 @@ export const opencode: Tool = {
   executable: "opencode",
   defaultModel: DEFAULT_MODEL,
   defaultVariant: DEFAULT_VARIANT,
+  needsWorktree: true,
   promptNote: SHELL_NOTE,
   label: opencodeLabel,
   invocation(run: AgentRun) {

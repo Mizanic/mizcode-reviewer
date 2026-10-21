@@ -33,6 +33,8 @@ export interface Tool {
   defaultModel: string;
   // Only tools that take a reasoning effort have one.
   defaultVariant?: string;
+  // The tool can read the code only from gather's head/ worktree.
+  needsWorktree?: boolean;
   // Added to the end of the prompt.
   promptNote: string;
   label(model: string): string;
@@ -207,7 +209,7 @@ function toLine(value: unknown): unknown {
 }
 
 // Fixes case and shape only: a lowercase severity or side, a line given as a
-// string, a suspicion line given as null. Then post's own checks run, the
+// string, a line or side given as null. Then post's own checks run, the
 // anchor check too when there is a diff, so a review post would refuse fails
 // here, before anything is written.
 export function normalise(reply: Record<string, unknown>, diff?: string): { findings: unknown[]; suspicions: unknown[] } {
@@ -232,6 +234,11 @@ export function normalise(reply: Record<string, unknown>, diff?: string): { find
     }
     for (const key of ["line", "start_line"]) {
       if (row[key] !== undefined) row[key] = toLine(row[key]);
+    }
+    // null means the field is not set: a finding with a null line goes in
+    // the summary, as one without a line does.
+    for (const key of ["line", "start_line", "side", "start_side"]) {
+      if (row[key] === null) delete row[key];
     }
   }
   for (const row of suspicions) {
@@ -407,6 +414,11 @@ export async function agent(argv: string[], options: RunOptions): Promise<string
   const suspicionsFile = join(workdir, "suspicions.json");
 
   const state = await readState(workdir);
+  if (tool.needsWorktree && !state.worktree) {
+    throw new BadInput(
+      `${tool.name} reads the code only from gather's head/ worktree, and ${workdir} has none. Run gather from a clone of ${state.repo}.`,
+    );
+  }
   let method: string;
   try {
     method = await readFile(args.methodFile, "utf8");
