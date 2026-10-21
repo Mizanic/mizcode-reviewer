@@ -40,7 +40,7 @@ The message says what to do next.
 | `not_installed` | The App is not installed on the repository | 1 | |
 | `github_error` | GitHub refused a request or could not be reached | 1 | `status`, when GitHub answered |
 | `git_error` | `git worktree remove` failed | 1 | |
-| `agent_error` | `agent` only: the tool is not on PATH, exited non-zero, ran past `--timeout`, or printed a reply that is not a review in the format `post` reads | 1 | |
+| `agent_error` | `agent` only: the tool is not on PATH, the workspace has files whose hooks cursor-agent would run, or the tool exited non-zero, ran past `--timeout`, or printed a reply that is not a review in the format `post` reads | 1 | |
 | `head_moved` | `post` only: the pull request head is no longer `head_sha` in `state.json` | 3 | `current_head` |
 | `review_incomplete` | `agent` only: the tool ran and replied that it could not finish the review | 5 | |
 
@@ -137,7 +137,7 @@ The tool runs in `worktree`, or `repo_root` when gather made no worktree, or the
 
 | Tool | How it runs |
 |---|---|
-| cursor | `cursor-agent --model <id> --mode ask --trust --print --output-format json --workspace <dir>`, with `--add-dir <workdir>` when the workdir is outside the workspace. Ask mode cannot edit files |
+| cursor | `cursor-agent --model <id> --mode ask --trust --print --output-format json --workspace <dir>`, with `--add-dir <workdir>` when the workdir is outside the workspace. Ask mode cannot edit files. cursor-agent runs the hooks that `.cursor/hooks.json`, `.claude/settings.json`, `.claude/settings.local.json` and project plugins name, even in ask mode, and nothing turns that off. So when the workspace has `.cursor/hooks.json`, `.cursor/plugins`, `.claude/settings.json`, `.claude/settings.local.json` or `.claude/plugins`, agent does not start it and fails with `agent_error` |
 | opencode | `opencode run --standalone --model <id>#<effort> --format json`, with a permission config in `OPENCODE_CONFIG_CONTENT` and `OPENCODE_DISABLE_PROJECT_CONFIG=1`, so an `opencode.json` in the pull request cannot add to the config. It denies edits, web access and every path outside the workspace and the workdir. It allows only the shell commands a review reads with, `git log`, `git show`, `rg` and `cat` among them, each as the exact command or followed by a space, and denies every other command instead of asking. It denies `gh` entirely, because a pattern cannot keep a write or another host out of a `gh api` command, so opencode needs gather's `head/`: without it, agent refuses with `bad_input` |
 
 agent takes the review object from the last fenced JSON block in the tool's final message, then from the first opening fence to the last closing one, then from the whole message. An `error` that is not `null` ends the run with `review_incomplete`, whatever else the object holds. It changes the case of `severity`, `side` and `start_side` to upper case, turns a `line` or `start_line` given as a string of digits into a number, and drops a `line`, `start_line`, `side` or `start_side` that is `null`. Then it runs `post`'s checks on every row, and on the anchors of the P0, P1 and P2 findings against `diff.patch` when the workdir has one. A row or an anchor they refuse fails the run with `agent_error`, so the files it writes always pass them.

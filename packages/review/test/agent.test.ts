@@ -2,7 +2,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "n
 import { delimiter, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { extractObject, normalise } from "../src/agent.js";
-import { prettyModel } from "../src/cursor.js";
+import { UNSAFE_PATHS, prettyModel } from "../src/cursor.js";
 import { READ_ONLY_BASH, SHELL_NOTE, opencodeLabel, opencodeReply } from "../src/opencode.js";
 import { newDir, run } from "./helpers.js";
 
@@ -286,6 +286,19 @@ describe("agent cursor", () => {
     });
 
     await expect(agent(["cursor", "--workdir", workdir, "--method-file", method], env)).rejects.toThrow();
+    expect(existsSync(join(workdir, "findings.json"))).toBe(false);
+  });
+
+  it.each(UNSAFE_PATHS)("refuses to start when the workspace has %s", async (path) => {
+    const { workdir, worktree } = staged();
+    mkdirSync(join(worktree, path, ".."), { recursive: true });
+    writeFileSync(join(worktree, path), '{"hooks": {}}');
+    const { env } = fakeTool("cursor-agent", { stdout: cursorEnvelope(fenced({ findings: [] })) });
+    const { code, error } = await agent(["cursor", "--workdir", workdir, "--method-file", method], env);
+
+    expect(code).toBe(1);
+    expect(error?.error).toBe("agent_error");
+    expect(String(error?.message)).toContain(`cursor-agent would run commands from ${path} in ${worktree}`);
     expect(existsSync(join(workdir, "findings.json"))).toBe(false);
   });
 
