@@ -4,9 +4,9 @@ mizcode-reviewer lets your AI coding tool (Claude Code or Codex) post its pull r
 
 ## How it works
 
-1. Your AI tool writes the review on your machine, with your own AI subscription.
-2. It saves the review to a file and runs the `post-review` command.
-3. `post-review` signs in to GitHub as your GitHub App with the App's private key, which stays on your machine.
+1. Your AI tool runs the `mizcode-reviewer` skill. The skill's script, `review.js gather`, reads the pull request as your GitHub App and stages it in a temporary directory.
+2. Your AI tool writes the review on your machine, with your own AI subscription.
+3. `review.js post` signs in to GitHub as your GitHub App with the App's private key, which stays on your machine.
 4. If the pull request has new commits since the review was written, it posts nothing and exits with code 3.
 5. Otherwise it posts the review as a comment review from the bot.
 
@@ -14,46 +14,46 @@ There is no server. Your machine talks to GitHub directly.
 
 ## Install
 
-You need Node.js 22 or later and npm. Install from a clone:
+You need Node.js 22 or later, npm and git. Build the skill from a clone:
 
 ```sh
 git clone https://github.com/Mizanic/mizcode-reviewer.git
 cd mizcode-reviewer
 npm ci
 npm run build
-npm install --global ./packages/server
 ```
 
-The last step links the `post-review` executable into npm's global `bin` directory, so it runs from any directory. Its path is `$(npm prefix --global)/bin/post-review`, for example `/usr/local/bin/post-review`. Check it with:
+The build writes the script and the GitHub client into `skills/mizcode-reviewer/scripts/lib/`. After that, the `skills/mizcode-reviewer/` folder runs on its own with Node.js 22 or later and git. It needs no `npm install`, no global link, no `node_modules` and no command on the PATH.
 
-```sh
-post-review --help
-```
-
-The link points at your clone. To update, run `git pull`, `npm ci` and `npm run build` in the clone again.
-
-## The review skill
-
-`skills/mizcode-reviewer/` is a skill for Claude Code and Codex. It has your AI write the review, then posts it as your GitHub App. Build it once from the clone:
-
-```sh
-npm ci
-npm run build
-```
-
-Then copy or link the folder where your tool looks for skills:
+Link or copy the folder where your tool looks for skills:
 
 ```sh
 ln -s "$PWD/skills/mizcode-reviewer" ~/.claude/skills/mizcode-reviewer   # Claude Code
 ln -s "$PWD/skills/mizcode-reviewer" ~/.agents/skills/mizcode-reviewer   # Codex
 ```
 
-The folder runs on its own with Node.js 22 or later and git, so a copy works anywhere. Put the App ID in `~/.config/mizcode-reviewer/config.json` as `{ "app_id": <id> }`, with the private key beside it as `app.pem`. Run it with `/mizcode-reviewer <pr>`. [packages/review/README.md](packages/review/README.md) has the details.
+Put the App ID in `~/.config/mizcode-reviewer/config.json` as `{ "app_id": <id> }`, with the private key beside it as `app.pem`. Then run `/mizcode-reviewer <pr>` in your tool.
 
-## Usage
+To update, run `git pull`, `npm ci` and `npm run build` in the clone again. A copied folder needs copying again.
+
+## The review skill
+
+`skills/mizcode-reviewer/` holds the review method, [SKILL.md](skills/mizcode-reviewer/SKILL.md), and the script it runs:
 
 ```sh
-post-review --app-id <id> --key-file <path> --repo <owner/name> --pr <number> --sha <commit> --review <review.json>
+node <skill>/scripts/review.js gather <pr> [--repo <owner/name>]
+node <skill>/scripts/review.js post --workdir <dir> --findings-file <file> [--suspicions-file <file>] --signed-by <label> [--dry-run]
+node <skill>/scripts/review.js cleanup --workdir <dir>
+```
+
+[packages/review/README.md](packages/review/README.md) is the command contract: every flag, the workdir files, the JSON output and the exit codes.
+
+## post-review
+
+`packages/server/` also holds `post-review`, a standalone command that posts one review file as the App. The skill does not use it. The build writes it to `packages/server/dist/cli.js`, and it runs from the clone:
+
+```sh
+node packages/server/dist/cli.js --app-id <id> --key-file <path> --repo <owner/name> --pr <number> --sha <commit> --review <review.json>
 ```
 
 `--sha` is the full commit SHA the review was written against. review.json holds the review:
@@ -84,7 +84,7 @@ Early development.
 
 ## Your own GitHub App
 
-[docs/github-app-manifest.json](docs/github-app-manifest.json) lists the permissions the App needs: pull requests read and write, and metadata read.
+[docs/run-your-own-bot.md](docs/run-your-own-bot.md) is the guide: register the App, save its private key, install it on your repositories and install the skill. [docs/github-app-manifest.json](docs/github-app-manifest.json) lists the permissions the App needs: pull requests read and write, and metadata read.
 
 ## License
 
