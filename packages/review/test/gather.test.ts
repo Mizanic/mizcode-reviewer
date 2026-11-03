@@ -219,7 +219,9 @@ describe("gather", () => {
     expect(code).toBe(0);
     expect(output.diff).toBeNull();
     expect(existsSync(join(String(output.workdir), "diff.patch"))).toBe(false);
-    expect(output.notes).toContainEqual(expect.stringMatching(/^could not fetch the diff \(GitHub returned 406: Sorry, the diff exceeded.*\); read files individually$/));
+    expect(output.notes).toContainEqual(
+      "could not fetch the diff (GitHub returned 406: Sorry, the diff exceeded the maximum number of files (300)) or build it locally (no head/ worktree); read files individually",
+    );
   });
 
   it("notes failed threads and keeps the pages read before the failure", async () => {
@@ -340,6 +342,87 @@ describe("gather in a clone", () => {
     expect(code).toBe(0);
     expect(output.worktree).toBeNull();
     expect(output.notes).toEqual([expect.stringMatching(/^git fetch origin pull\/8\/head failed: /)]);
+  });
+});
+
+describe("gather builds the diff from the clone", () => {
+  // GitHub refuses the diff media type to an App without contents access on a
+  // private repo, while the PR and its files still read fine.
+  const forbidden = { status: 403, body: { message: "Resource not accessible by integration" } };
+
+  // origin has main (the base) and refs/pull/7/head one commit ahead. The
+  // clone's own config asks for mnemonic prefixes and the histogram
+  // algorithm, which the local diff must override.
+  function cloneWithBase() {
+    const remotes = newDir("remotes");
+    const bare = join(remotes, "acme", "widgets.git");
+    sh(["init", "--quiet", "--bare", bare], remotes);
+    const src = newDir("src");
+    sh(["init", "--quiet"], src);
+    writeFileSync(join(src, "app.ts"), "export const a = 1;\n");
+    sh(["add", "app.ts"], src);
+    sh(["commit", "--quiet", "-m", "base"], src);
+    sh(["push", "--quiet", bare, "HEAD:refs/heads/main"], src);
+    writeFileSync(join(src, "app.ts"), "export const a = 2;\n");
+    sh(["commit", "--quiet", "-am", "head"], src);
+    sh(["push", "--quiet", bare, "HEAD:refs/pull/7/head"], src);
+    const headSha = sh(["rev-parse", "HEAD"], src);
+
+    const dir = newDir("clone");
+    sh(["init", "--quiet"], dir);
+    sh(["remote", "add", "origin", "https://github.com/acme/widgets.git"], dir);
+    sh(["config", `url.file://${remotes}/.insteadOf`, "https://github.com/"], dir);
+    sh(["config", "diff.mnemonicPrefix", "true"], dir);
+    sh(["config", "diff.algorithm", "histogram"], dir);
+    return { dir, headSha };
+  }
+
+  async function gatherIn(cwd: string, headSha: string) {
+    const github = mockGitHub([installation, token, pull(headSha), files, forbidden, threads]);
+    const result = await run(["gather", "7"], { ...github.options, home: home(), cwd, tmpdir: newDir("tmp") });
+    return { ...result, output: JSON.parse(result.stdout || "{}") as Record<string, unknown> };
+  }
+
+  it("writes diff.patch from the head against its base when GitHub refuses the diff", async () => {
+    const { dir, headSha } = cloneWithBase();
+    const { code, stderr, output } = await gatherIn(dir, headSha);
+
+    expect(stderr).toBe("");
+    expect(code).toBe(0);
+    const diffFile = join(String(output.workdir), "diff.patch");
+    expect(output.diff).toBe(diffFile);
+    expect(readFileSync(diffFile, "utf8")).toMatch(
+      /^diff --git a\/app\.ts b\/app\.ts\nindex [0-9a-f]+\.\.[0-9a-f]+ 100644\n--- a\/app\.ts\n\+\+\+ b\/app\.ts\n@@ -1 \+1 @@\n-export const a = 1;\n\+export const a = 2;\n$/,
+    );
+    expect(output.notes).toEqual(["could not fetch the diff (GitHub returned 403: Resource not accessible by integration); built diff.patch from the local clone"]);
+  });
+
+  it("notes why it could not build the diff when the base is not on the remote", async () => {
+    const remotes = newDir("remotes");
+    const bare = join(remotes, "acme", "widgets.git");
+    sh(["init", "--quiet", "--bare", bare], remotes);
+    const src = newDir("src");
+    sh(["init", "--quiet"], src);
+    writeFileSync(join(src, "app.ts"), "export const a = 1;\n");
+    sh(["add", "app.ts"], src);
+    sh(["commit", "--quiet", "-m", "head"], src);
+    sh(["push", "--quiet", bare, "HEAD:refs/pull/7/head"], src);
+    const headSha = sh(["rev-parse", "HEAD"], src);
+    const dir = newDir("clone");
+    sh(["init", "--quiet"], dir);
+    sh(["remote", "add", "origin", "https://github.com/acme/widgets.git"], dir);
+    sh(["config", `url.file://${remotes}/.insteadOf`, "https://github.com/"], dir);
+
+    const { code, output } = await gatherIn(dir, headSha);
+
+    expect(code).toBe(0);
+    expect(output.diff).toBeNull();
+    expect(existsSync(join(String(output.workdir), "diff.patch"))).toBe(false);
+    expect(output.notes).toEqual([
+      expect.stringMatching(
+        /^could not fetch the diff \(GitHub returned 403: Resource not accessible by integration\) or build it locally \(git fetch origin main failed: .+\); read files individually$/,
+      ),
+    ]);
   });
 });
 

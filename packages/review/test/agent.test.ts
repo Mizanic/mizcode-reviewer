@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { delimiter, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { extractObject, normalise } from "../src/agent.js";
@@ -162,6 +162,7 @@ describe("agent cursor", () => {
     const workdir = join(repoRoot, "workdir");
     mkdirSync(workdir);
     writeFileSync(join(workdir, "state.json"), JSON.stringify({ repo: "acme/widgets", pr: 7, head_sha: sha, worktree: null, repo_root: repoRoot }));
+    writeFileSync(join(workdir, "diff.patch"), diffText);
     const { env, recorded } = fakeTool("cursor-agent", { stdout: cursorEnvelope(fenced({ findings: [] })) });
     const { code } = await agent(["cursor", "--workdir", workdir, "--method-file", method], env);
 
@@ -372,6 +373,20 @@ describe("agent cursor", () => {
     expect(error?.error).toBe("bad_input");
     expect(String(error?.message)).toContain(`The worktree ${worktree} is at `);
     expect(String(error?.message)).toContain(`not the reviewed commit ${sha}. Run gather again.`);
+  });
+
+  it("refuses to start without diff.patch, since the tool cannot tell which lines it may comment on", async () => {
+    const { workdir } = staged();
+    rmSync(join(workdir, "diff.patch"));
+    const { env, recorded } = fakeTool("cursor-agent", { stdout: cursorEnvelope(fenced({ findings: [] })) });
+    const { code, error } = await agent(["cursor", "--workdir", workdir, "--method-file", method], env);
+
+    expect(code).toBe(2);
+    expect(error?.error).toBe("bad_input");
+    expect(error?.message).toBe(
+      `There is no diff.patch in ${workdir}, so cursor cannot tell which lines it may comment on. Run gather from a clone of acme/widgets.`,
+    );
+    expect(recorded).toThrow();
   });
 
   it("reports bad_input when the workdir is a file", async () => {

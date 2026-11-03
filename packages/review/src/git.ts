@@ -112,3 +112,40 @@ export async function makeWorktree(
   }
   return { worktree: null, repoRoot: root, note: `could not create worktree: ${short(added.stderr)}` };
 }
+
+export type LocalDiff = { diff: string; note?: undefined } | { diff?: undefined; note: string };
+
+// The PR diff built in the PR head worktree when GitHub will not serve it (a
+// private repo whose App cannot read contents): the head against its merge
+// base with the base branch fetched from the PR's remote. The options pin what
+// GitHub's diff media type shows, whatever the user's git config says, so
+// post's anchor check reads it the same way.
+export async function localDiff(repo: string, base: string, worktree: string, cwd: string): Promise<LocalDiff> {
+  const remote = await matchingRemote(repo, cwd);
+  if (!remote) return { note: `no git remote here matches ${repo}` };
+  const fetched = await git(["fetch", "--quiet", remote, `refs/heads/${base}`], cwd);
+  if (fetched.code !== 0) return { note: `git fetch ${remote} ${base} failed: ${short(fetched.stderr)}` };
+  const baseSha = await git(["rev-parse", "FETCH_HEAD"], cwd);
+  if (baseSha.code !== 0) return { note: `could not read the fetched ${base}: ${short(baseSha.stderr)}` };
+  const diff = await git(
+    [
+      "-c",
+      "diff.mnemonicPrefix=false",
+      "-c",
+      "diff.noprefix=false",
+      "diff",
+      "--no-color",
+      "--no-ext-diff",
+      "--no-textconv",
+      "--src-prefix=a/",
+      "--dst-prefix=b/",
+      "--unified=3",
+      "--find-renames",
+      "--diff-algorithm=myers",
+      `${baseSha.stdout.trim()}...HEAD`,
+    ],
+    worktree,
+  );
+  if (diff.code !== 0) return { note: `git diff against ${base} failed: ${short(diff.stderr)}` };
+  return { diff: diff.stdout };
+}

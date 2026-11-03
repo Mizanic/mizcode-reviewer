@@ -18,7 +18,7 @@ import {
   type ReviewThread,
 } from "../../server/src/index.js";
 import { BadInput, loadConfig } from "./config.js";
-import { makeWorktree, originRepo } from "./git.js";
+import { localDiff, makeWorktree, originRepo } from "./git.js";
 import type { RunOptions } from "./review.js";
 
 const OPTIONS = {
@@ -30,7 +30,8 @@ export const GATHER_USAGE = `Usage: review.js gather <pr> [--repo <owner/name>]
 
 Reads the pull request, its diff, its body and its review threads as the
 GitHub App, and stages them in a new temp workdir. When run from a clone of
-the repository, also makes a detached worktree of the PR head at head/.
+the repository, also makes a detached worktree of the PR head at head/, and
+builds the diff from the clone when GitHub will not serve it.
 
 Options:
   --repo <owner/name>  The repository. Default: origin of the clone in the
@@ -115,12 +116,13 @@ export async function gather(argv: string[], options: RunOptions): Promise<strin
   const notes: string[] = [];
 
   let diffFile: string | null = null;
+  let diffError: string | null = null;
   try {
     const diff = await getPullRequestDiff(repo, pullNumber, token, options);
     diffFile = join(workdir, "diff.patch");
     await writeFile(diffFile, diff, "utf8");
   } catch (error) {
-    notes.push(`could not fetch the diff (${errorText(error)}); read files individually`);
+    diffError = errorText(error);
   }
 
   await writeFile(join(workdir, "pr_body.md"), pull.body, "utf8");
@@ -138,6 +140,20 @@ export async function gather(argv: string[], options: RunOptions): Promise<strin
 
   const made = await makeWorktree(repoName, pullNumber, pull.headSha, workdir, cwd);
   if (made.note) notes.push(made.note);
+
+  // Without diff.patch a reviewer cannot tell which lines it may comment on,
+  // and post refuses the whole review for one anchor outside the diff. Build
+  // it from the clone when GitHub would not serve it.
+  if (diffError !== null) {
+    const local = made.worktree ? await localDiff(repoName, pull.base, made.worktree, cwd) : { note: "no head/ worktree" };
+    if (local.diff !== undefined) {
+      diffFile = join(workdir, "diff.patch");
+      await writeFile(diffFile, local.diff, "utf8");
+      notes.push(`could not fetch the diff (${diffError}); built diff.patch from the local clone`);
+    } else {
+      notes.push(`could not fetch the diff (${diffError}) or build it locally (${local.note}); read files individually`);
+    }
+  }
 
   const state = {
     repo: repoName,

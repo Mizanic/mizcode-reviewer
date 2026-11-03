@@ -55,7 +55,7 @@ The command prints the reviewed SHA and creates a temporary directory
 containing:
 
 - `state.json`: repository, PR, base, head SHA, and cleanup state
-- `diff.patch`: full PR diff
+- `diff.patch`: full PR diff, built from the clone when GitHub refuses it
 - `threads.json`: existing review threads and resolution state
 - `pr_body.md`: PR description
 - `head/`: detached worktree at the PR head when a matching clone is available
