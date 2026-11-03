@@ -276,7 +276,8 @@ export function normalise(reply: Record<string, unknown>, diff?: string): { find
   return { findings, suspicions };
 }
 
-// The workdir's diff.patch, or undefined when gather could not fetch it.
+// The workdir's diff.patch, or undefined when gather could neither fetch nor
+// build it.
 async function readDiff(workdir: string): Promise<string | undefined> {
   const path = join(workdir, "diff.patch");
   try {
@@ -472,6 +473,13 @@ export async function agent(argv: string[], options: RunOptions): Promise<string
       `${tool.name} reads the code only from gather's head/ worktree, and ${workdir} has none. Run gather from a clone of ${state.repo}.`,
     );
   }
+  // The prompt names diff.patch as the review scope. Without it the tool
+  // cannot tell which lines it may comment on, and post refuses the whole
+  // review for one comment outside the diff.
+  const diff = await readDiff(workdir);
+  if (diff === undefined) {
+    throw new BadInput(`There is no diff.patch in ${workdir}, so ${tool.name} cannot tell which lines it may comment on. Run gather from a clone of ${state.repo}.`);
+  }
   let method: string;
   try {
     method = await readFile(args.methodFile, "utf8");
@@ -509,7 +517,7 @@ export async function agent(argv: string[], options: RunOptions): Promise<string
     throw new AgentFailed(`${tool.executable} exited ${exit.code ?? "on a signal"}: ${detail.slice(0, 500)}`);
   }
 
-  const { findings, suspicions } = normalise(extractObject(tool.reply(exit.stdout)), await readDiff(workdir));
+  const { findings, suspicions } = normalise(extractObject(tool.reply(exit.stdout)), diff);
   // suspicions.json first: a findings.json on disk means both were written.
   // A failed write leaves neither.
   try {

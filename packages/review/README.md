@@ -62,7 +62,7 @@ gather signs in as the App with the settings above and gets an installation toke
 | File | Content |
 |---|---|
 | `state.json` | `{ "repo", "pr", "head_sha", "base", "url", "workdir", "worktree", "repo_root" }`. `worktree` and `repo_root` are paths or `null` |
-| `diff.patch` | The pull request's diff against its base, as GitHub returns it. Absent when GitHub refuses the diff, for example when it is too large |
+| `diff.patch` | The pull request's diff against its base, as GitHub returns it. When GitHub refuses the diff, for example to an App that cannot read a private repository's contents, gather builds it in `head/` from the base branch on the pull request's remote, with options that match GitHub's diff whatever the local git config says. Absent when neither works |
 | `threads.json` | An array of the existing review threads: `{ "path", "line", "is_resolved", "is_outdated", "author", "excerpt", "comment_count" }`. `line` and `author` can be `null`. `excerpt` is the first 300 characters, counted as Unicode code points, of the thread's first comment. `comment_count` is the thread's number of comments |
 | `pr_body.md` | The pull request description, empty when there is none |
 | `head/` | A detached git worktree at the head commit. Only when the current directory is in a git clone with a remote whose URL ends in `/<owner>/<name>`, with or without `.git` |
@@ -98,7 +98,8 @@ On success, gather prints this JSON object, indented by two spaces, followed by 
 
 | Note | Cause |
 |---|---|
-| `could not fetch the diff (<reason>); read files individually` | GitHub refused the diff or could not be reached |
+| `could not fetch the diff (<reason>); built diff.patch from the local clone` | GitHub refused the diff or could not be reached, and gather built it from `head/` |
+| `could not fetch the diff (<reason>) or build it locally (<reason>); read files individually` | Neither worked: there is no `head/`, or the base branch could not be fetched or diffed |
 | `could not fetch review threads (<reason>); existing-thread dedup may be incomplete` | The threads query failed. `threads.json` holds the pages read before the failure |
 | `not inside a git repo; run gather from a clone of the repository to get head/` | The current directory is not in a git repository |
 | `no git remote here matches <owner/name>; run gather from a clone of the repository to get head/` | No remote of the clone is the pull request's repository |
@@ -133,7 +134,7 @@ review.js agent <cursor|opencode> --workdir <dir> [--model <id>] [--variant <eff
 
 agent has a different model review the code than the one that wrote it. It reads `state.json` from the workdir and builds one prompt: the method file in full, then how this run differs from it, then the output contract. The tool reads the diff, the workdir files and the repository, and replies with one JSON object, `{"findings": [...], "suspicions": [...]}` or `{"error": "<what stopped it>"}`. agent never posts.
 
-The tool runs in `worktree`, or `repo_root` when gather made no worktree, or the current directory. A worktree must be at `head_sha`: gather falls back to `FETCH_HEAD` when it cannot check out the head commit, and agent then refuses with `bad_input`. `PWD` is set to that directory too, because opencode reads its directory from `PWD`. It runs read-only:
+The tool runs in `worktree`, or `repo_root` when gather made no worktree, or the current directory. A worktree must be at `head_sha`: gather falls back to `FETCH_HEAD` when it cannot check out the head commit, and agent then refuses with `bad_input`. The workdir must have a `diff.patch`: the prompt names it as the review scope, and without it the tool cannot tell which lines it may comment on, so agent refuses with `bad_input` before starting the tool. `PWD` is set to that directory too, because opencode reads its directory from `PWD`. It runs read-only:
 
 | Tool | How it runs |
 |---|---|
