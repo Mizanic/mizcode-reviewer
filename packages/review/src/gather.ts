@@ -1,4 +1,4 @@
-// review.js gather: read the PR as the App and stage what the review
+// review.js gather: read the PR as the signed-in user and stage what the review
 // needs in a new temp workdir. The files and the JSON printed match the
 // Python pr-review gather.
 
@@ -9,7 +9,6 @@ import { parseArgs } from "node:util";
 import {
   GitHubClientError,
   ReviewThreadsError,
-  createRepoToken,
   getPullRequest,
   getPullRequestDiff,
   getReviewThreads,
@@ -17,7 +16,8 @@ import {
   type Repo,
   type ReviewThread,
 } from "../../server/src/index.js";
-import { BadInput, loadConfig } from "./config.js";
+import { BadInput } from "./config.js";
+import { userToken } from "./signin.js";
 import { localDiff, makeWorktree, originRepo } from "./git.js";
 import type { RunOptions } from "./review.js";
 
@@ -107,9 +107,21 @@ export async function gather(argv: string[], options: RunOptions): Promise<strin
   const { repo, pullNumber } = args;
   const repoName = `${repo.owner}/${repo.name}`;
 
-  const config = await loadConfig(options.home);
-  const token = await createRepoToken(config.appId, config.privateKey, repo, options);
-  const pull = await getPullRequest(repo, pullNumber, token, options);
+  // The signed-in user's token reads the pull request. It can read only
+  // where mizcode-reviewer[bot] is installed and the user has access.
+  const token = await userToken(options);
+  let pull;
+  try {
+    pull = await getPullRequest(repo, pullNumber, token, options);
+  } catch (error) {
+    if (error instanceof GitHubClientError && error.status === 404) {
+      throw new GitHubClientError(
+        "not_installed",
+        `Could not read ${repoName}#${pullNumber}. Check the pull request number, and that mizcode-reviewer[bot] is installed on ${repoName}: https://github.com/apps/mizcode-reviewer/installations/new`,
+      );
+    }
+    throw error;
+  }
   const files = await listPullRequestFiles(repo, pullNumber, token, options);
 
   const workdir = await mkdtemp(join(options.tmpdir ?? tmpdir(), `mizcode-review-${pullNumber}-`));

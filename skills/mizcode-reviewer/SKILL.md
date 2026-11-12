@@ -27,11 +27,12 @@ whether findings exist or not, unless the user explicitly says not to post or
 asks to see the review first.
 
 Use this skill's `scripts/review.js` for GitHub PR plumbing. Run it as
-`node <skill>/scripts/review.js`, where `<skill>` is this skill's folder. It needs Node.js 22 or later and nothing else installed. It reads
-the pull request and posts the review as the GitHub App,
-`mizcode-reviewer[bot]`, never as the user, and it does not use `gh`. Its settings are in
-`~/.config/mizcode-reviewer/config.json`: `app_id`, and `key_file`, which
-defaults to `app.pem` beside it.
+`node <skill>/scripts/review.js`, where `<skill>` is this skill's folder. It
+needs Node.js 22 or later and nothing else installed, and it does not use
+`gh`. It reads the pull request as the user, with the token from a one-time
+GitHub sign-in. The review posts through the shared bot's MCP tool
+`submit_review`, from the `mizcode-reviewer` MCP server, as
+`mizcode-reviewer[bot]`, never as the user.
 
 ## Arguments
 
@@ -65,10 +66,24 @@ ran outside a clone whose remote is the pull request's repository. Run it again
 from such a clone. If there is none, review from `diff.patch` alone and name
 every file you could not read in the coverage report (step 9).
 
-If gather exits non-zero, it prints `{"error", "message"}` on stderr. Stop and
-report the message: `not_configured` (exit 4) means the config file or its
-`app_id` is missing, `not_installed` (exit 1) means the App is not installed on
-the repository, and `bad_input` (exit 2) names the flag or file to fix.
+If gather exits 4 with `not_signed_in`, sign the user in, once per machine:
+
+1. Run `node <skill>/scripts/review.js login`. It prints
+   `{"verification_uri", "user_code", "expires_in"}` and ends.
+2. Show the user both, in one line: open `verification_uri` on any device,
+   enter `user_code`, and approve mizcode-reviewer.
+3. Run `node <skill>/scripts/review.js login --wait`. It prints
+   `{"status": "signed_in"}` once the code is entered, or
+   `{"status": "waiting"}` after 100 seconds: run it again. It exits 1 with
+   `sign_in_failed` if the user cancels or the code expires; tell the user and
+   start again from 1 only if they ask.
+4. Run gather again.
+
+Any other non-zero exit prints `{"error", "message"}` on stderr. Stop and
+report the message: `not_installed` (exit 1) means the pull request was not
+found or mizcode-reviewer[bot] is not installed on the repository, and the
+message has the install link; `bad_input` (exit 2) names the flag or file to
+fix.
 
 If there is no open PR, stop unless the user explicitly requested a pre-PR
 review. For a pre-PR review, inspect the merge-base diff locally and do not
@@ -303,9 +318,9 @@ lines, no praise, no history. `post` supplies badges and the summary; see
 [references/codex-format.md](references/codex-format.md) for the rendered
 output.
 
-## 8. Dry-run, then post
+## 8. Render, then post
 
-Always render and validate first:
+Render and validate first:
 
 ```bash
 node <skill>/scripts/review.js post --workdir <workdir> \
@@ -331,20 +346,34 @@ could not be resolved — omit the flag only when there are none:
 `no new issues found` sentence — a pull request with an unresolved severe
 candidate is not an all-clear, and automation keys on that phrase.
 
-Inspect the payload for severity, concision, duplicate threads, and valid
+It prints the review as JSON: `repo`, `pull_number`, `commit_sha`, `body` and
+`comments`. Inspect it for severity, concision, duplicate threads, and valid
 anchors. The top-level GitHub review body is deliberately only a finding count
 and reviewed SHA. Do not append “checked and fine” notes, resolved-thread
 recaps, old findings, test output, or a narrative of the review process.
 
-For a GitHub PR, rerun without `--dry-run` after validation. Do this even when
-`findings.json` is empty: GitHub must receive the one-line “no findings” review
-so the user does not have to search elsewhere for the result.
+To post, call the MCP tool `submit_review` with that JSON as its arguments,
+unchanged. Do this even when `findings.json` is empty: GitHub must receive the
+one-line “no findings” review so the user does not have to search elsewhere
+for the result. If the tool is not available, the `mizcode-reviewer` MCP
+server is not set up: stop, report the findings, and say so.
+
+`submit_review` returns `{"review_id", "html_url"}`, or an error as
+`{"error", "message"}`:
+
+| Error | What to do |
+| --- | --- |
+| `unauthorized` | The sign-in token is missing or was revoked. Sign in as in step 1, then call `submit_review` again |
+| `not_installed` | mizcode-reviewer[bot] is not installed on the repository. Report it with the message |
+| `no_access` | The signed-in user cannot write to the repository. Report it; nothing was posted |
+| `head_moved` | See below |
+| `github_error` | Report GitHub's message and `status` |
 
 Skip posting only when the user explicitly says not to post, asks to see the
 review first, or requested a local pre-PR review.
 
-If the head moved while the review was being written, `post` exits 3 without
-posting. Findings drawn from the old code must not be attached to a commit
+If the head moved while the review was being written, `submit_review` returns
+`head_moved` with `current_head` and posts nothing. Findings drawn from the old code must not be attached to a commit
 nobody reviewed, so re-gather and review the new head rather than retrying the
 post.
 
@@ -359,14 +388,14 @@ reader can tell which one did:
 --signed-by 'Codex/<the model running this session, e.g. GPT-5>'     # Codex
 ```
 
-`post` renders it as a note at the top of the review — `🤖 Reviewed by
+The dry run renders it as a note at the top of the review — `🤖 Reviewed by
 Claude/Opus-5` — and adds the hidden marker `forge`'s watcher keys on as an
 HTML comment on its own, whatever the label says. So the label is a record,
 not a mechanism: name the model that actually ran, and nothing else about it
 can jam the loop.
 
-On success `post` prints the review's URL. Hand it back to the caller — for
-automation it is the proof that this specific review landed.
+On success `submit_review` returns the review's `html_url`. Hand it back to
+the caller: for automation it is the proof that this specific review landed.
 
 ## 9. Clean up and report
 
@@ -404,8 +433,8 @@ node <skill>/scripts/review.js agent opencode --workdir <workdir>   # OpenCode
 ```
 
 It runs the tool read-only with this file as the method, and writes
-`findings.json` and `suspicions.json` in the workdir. Post them in step 8 with
-`--signed-by` set to the `signed_by` it prints. If it exits non-zero there is
+`findings.json` and `suspicions.json` in the workdir. Render and post them in
+step 8 with `--signed-by` set to the `signed_by` it prints. If it exits non-zero there is
 no review: post nothing. Exit 5, `review_incomplete`, means the tool could not
 finish. Run it again or review in this session.
 

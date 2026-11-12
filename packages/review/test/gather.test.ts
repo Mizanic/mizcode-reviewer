@@ -1,11 +1,14 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { home, mockGitHub, newDir, rsaKey, run, sh, type Call } from "./helpers.js";
+import { home, mockGitHub, newDir, run, sh } from "./helpers.js";
 
 const sha = "a".repeat(40);
-const installation = { status: 200, body: { id: 99 } };
-const token = { status: 201, body: { token: "ghs_installation" } };
+
+// A home directory signed in to the shared bot, with a token that never expires.
+function signedIn(): string {
+  return home({ "token.json": JSON.stringify({ access_token: "ghu_user" }) });
+}
 
 function pull(headSha = sha) {
   return {
@@ -64,7 +67,7 @@ function readJson(path: string): unknown {
 }
 
 // Runs gather outside any git repo, so no worktree is attempted.
-async function gather(argv: string[], responses: Array<{ status: number; body: unknown }>, homeDir = home()) {
+async function gather(argv: string[], responses: Array<{ status: number; body: unknown }>, homeDir = signedIn()) {
   const github = mockGitHub(responses);
   const cwd = newDir("not-a-repo");
   const result = await run(["gather", ...argv], { ...github.options, home: homeDir, cwd, tmpdir: newDir("tmp") });
@@ -72,10 +75,8 @@ async function gather(argv: string[], responses: Array<{ status: number; body: u
 }
 
 describe("gather", () => {
-  it("reads the PR as the App and stages the same files and JSON as the Python gather", async () => {
+  it("reads the PR as the signed-in user and stages the same files and JSON as the Python gather", async () => {
     const { code, stdout, stderr, calls, output } = await gather(["7", "--repo", "acme/widgets"], [
-      installation,
-      token,
       pull(),
       files,
       diff,
@@ -144,16 +145,13 @@ describe("gather", () => {
     });
 
     expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
-      "GET https://api.github.com/repos/acme/widgets/installation",
-      "POST https://api.github.com/app/installations/99/access_tokens",
       "GET https://api.github.com/repos/acme/widgets/pulls/7",
       "GET https://api.github.com/repos/acme/widgets/pulls/7/files?per_page=100&page=1",
       "GET https://api.github.com/repos/acme/widgets/pulls/7",
       "POST https://api.github.com/graphql",
     ]);
-    const [, mint, ...reads] = calls as [Call, Call, ...Call[]];
-    expect(mint.body).toEqual({ repositories: ["widgets"] });
-    for (const read of reads) expect(read.headers.Authorization).toBe("Bearer ghs_installation");
+    const reads = calls;
+    for (const read of reads) expect(read.headers.Authorization).toBe("Bearer ghu_user");
     expect(reads[2]?.headers.Accept).toBe("application/vnd.github.diff");
     expect(reads[3]?.body).toMatchObject({ variables: { owner: "acme", name: "widgets", number: 7, cursor: null } });
     expect(String((reads[3]?.body as { query: string }).query)).toContain("reviewThreads(first: 100, after: $cursor)");
@@ -162,7 +160,7 @@ describe("gather", () => {
   it("accepts #7 and writes an empty pr_body.md when the PR has no body", async () => {
     const noBody = pull();
     noBody.body.body = null as unknown as string;
-    const { code, output } = await gather(["#7", "--repo", "acme/widgets"], [installation, token, noBody, files, diff, threads]);
+    const { code, output } = await gather(["#7", "--repo", "acme/widgets"], [noBody, files, diff, threads]);
 
     expect(code).toBe(0);
     expect(output.pr).toBe(7);
@@ -172,8 +170,6 @@ describe("gather", () => {
   it("reads every page of files and threads", async () => {
     const page1 = Array.from({ length: 100 }, (_, i) => ({ filename: `f${i}.ts`, additions: 1, deletions: 0 }));
     const { code, calls, output } = await gather(["7", "--repo", "acme/widgets"], [
-      installation,
-      token,
       pull(),
       { status: 200, body: page1 },
       { status: 200, body: [{ filename: "last.ts", additions: 1, deletions: 1 }] },
@@ -184,8 +180,8 @@ describe("gather", () => {
 
     expect(code).toBe(0);
     expect((output.files as unknown[]).length).toBe(101);
-    expect(calls[4]?.url).toBe("https://api.github.com/repos/acme/widgets/pulls/7/files?per_page=100&page=2");
-    expect(calls[7]?.body).toMatchObject({ variables: { cursor: "CURSOR1" } });
+    expect(calls[2]?.url).toBe("https://api.github.com/repos/acme/widgets/pulls/7/files?per_page=100&page=2");
+    expect(calls[5]?.body).toMatchObject({ variables: { cursor: "CURSOR1" } });
     expect(output.threads_open).toBe(1);
     expect(output.threads_resolved).toBe(1);
   });
@@ -193,8 +189,6 @@ describe("gather", () => {
   it("cuts a thread excerpt to 300 characters, counting code points", async () => {
     const long = "é".repeat(150) + "😀".repeat(200);
     const { output } = await gather(["7", "--repo", "acme/widgets"], [
-      installation,
-      token,
       pull(),
       files,
       diff,
@@ -208,8 +202,6 @@ describe("gather", () => {
 
   it("notes a failed diff and still stages the rest", async () => {
     const { code, output } = await gather(["7", "--repo", "acme/widgets"], [
-      installation,
-      token,
       pull(),
       files,
       { status: 406, body: { message: "Sorry, the diff exceeded the maximum number of files (300)." } },
@@ -226,8 +218,6 @@ describe("gather", () => {
 
   it("notes failed threads and keeps the pages read before the failure", async () => {
     const { code, output } = await gather(["7", "--repo", "acme/widgets"], [
-      installation,
-      token,
       pull(),
       files,
       diff,
@@ -244,15 +234,15 @@ describe("gather", () => {
   });
 
   it("notes threads GitHub could not be reached for, keeping the pages read", async () => {
-    const github = mockGitHub([installation, token, pull(), files, diff, threadsPage([threadNode("a.ts", false)], "CURSOR1")]);
+    const github = mockGitHub([pull(), files, diff, threadsPage([threadNode("a.ts", false)], "CURSOR1")]);
     const base = github.options.fetch as typeof fetch;
     let n = 0;
     const result = await run(["gather", "7", "--repo", "acme/widgets"], {
       fetch: async (url, init) => {
-        if (++n === 7) throw new TypeError("fetch failed", { cause: new Error("getaddrinfo ENOTFOUND api.github.com") });
+        if (++n === 5) throw new TypeError("fetch failed", { cause: new Error("getaddrinfo ENOTFOUND api.github.com") });
         return base(url, init);
       },
-      home: home(),
+      home: signedIn(),
       cwd: newDir("not-a-repo"),
       tmpdir: newDir("tmp"),
     });
@@ -289,8 +279,8 @@ describe("gather in a clone", () => {
   }
 
   async function gatherIn(cwd: string, argv: string[], headSha: string) {
-    const github = mockGitHub([installation, token, pull(headSha), files, diff, threads]);
-    const result = await run(["gather", ...argv], { ...github.options, home: home(), cwd, tmpdir: newDir("tmp") });
+    const github = mockGitHub([pull(headSha), files, diff, threads]);
+    const result = await run(["gather", ...argv], { ...github.options, home: signedIn(), cwd, tmpdir: newDir("tmp") });
     return { ...result, calls: github.calls, output: JSON.parse(result.stdout || "{}") as Record<string, unknown> };
   }
 
@@ -300,7 +290,7 @@ describe("gather in a clone", () => {
 
     expect(stderr).toBe("");
     expect(code).toBe(0);
-    expect(calls[0]?.url).toBe("https://api.github.com/repos/acme/widgets/installation");
+    expect(calls[0]?.url).toBe("https://api.github.com/repos/acme/widgets/pulls/7");
     const worktree = join(String(output.workdir), "head");
     expect(output.worktree).toBe(worktree);
     expect(output.notes).toEqual([]);
@@ -378,8 +368,8 @@ describe("gather builds the diff from the clone", () => {
   }
 
   async function gatherIn(cwd: string, headSha: string) {
-    const github = mockGitHub([installation, token, pull(headSha), files, forbidden, threads]);
-    const result = await run(["gather", "7"], { ...github.options, home: home(), cwd, tmpdir: newDir("tmp") });
+    const github = mockGitHub([pull(headSha), files, forbidden, threads]);
+    const result = await run(["gather", "7"], { ...github.options, home: signedIn(), cwd, tmpdir: newDir("tmp") });
     return { ...result, output: JSON.parse(result.stdout || "{}") as Record<string, unknown> };
   }
 
@@ -432,7 +422,7 @@ describe("gather errors", () => {
     const tmp = newDir("tmp");
     const result = await run(["gather", ...argv], {
       ...github.options,
-      home: options.homeDir ?? home(),
+      home: options.homeDir ?? signedIn(),
       cwd: options.cwd ?? newDir("not-a-repo"),
       tmpdir: tmp,
     });
@@ -468,76 +458,42 @@ describe("gather errors", () => {
     expect(String(error?.message)).toContain("Pass --repo owner/name");
   });
 
-  it("exits 4 with not_configured when config.json is missing", async () => {
-    const { code, error, calls } = await failure(["7", "--repo", "acme/widgets"], { homeDir: home({}) });
+  it("exits 4 with not_signed_in and reads nothing when there is no saved token", async () => {
+    const { code, error, calls, tmp } = await failure(["7", "--repo", "acme/widgets"], { homeDir: home({}) });
 
     expect(code).toBe(4);
-    expect(error?.error).toBe("not_configured");
-    expect(String(error?.message)).toContain(join(".config", "mizcode-reviewer", "config.json"));
-    expect(calls).toHaveLength(0);
-  });
-
-  it("exits 4 with not_configured when config.json has no app_id", async () => {
-    const { code, error } = await failure(["7", "--repo", "acme/widgets"], {
-      homeDir: home({ "config.json": "{}", "app.pem": rsaKey }),
+    expect(error).toEqual({
+      error: "not_signed_in",
+      message: "Not signed in to the shared mizcode-reviewer bot. Run review.js login.",
     });
-
-    expect(code).toBe(4);
-    expect(error?.error).toBe("not_configured");
-    expect(String(error?.message)).toContain("has no app_id");
-  });
-
-  it.each([
-    ["not JSON", { "config.json": "{app_id: 1}" }, "is not valid JSON"],
-    ["not an object", { "config.json": "[1]" }, "must be a JSON object"],
-    ["an unknown field", { "config.json": '{"app_id": 1, "appId": 1}' }, "unknown fields appId"],
-    ["a non-numeric app_id", { "config.json": '{"app_id": "abc"}' }, 'must be the App\'s numeric ID, not "abc"'],
-    ["a missing key file", { "config.json": '{"app_id": 1}' }, "app.pem does not exist"],
-    ["a key file that is not a key", { "config.json": '{"app_id": "1"}', "app.pem": "hello" }, "is not an RSA private key"],
-  ])("rejects a config with %s as bad_input", async (_, files, message) => {
-    const { code, error, calls } = await failure(["7", "--repo", "acme/widgets"], { homeDir: home(files) });
-
-    expect(code).toBe(2);
-    expect(error?.error).toBe("bad_input");
-    expect(String(error?.message)).toContain(message);
     expect(calls).toHaveLength(0);
+    expect(readdirSync(tmp)).toEqual([]);
   });
 
-  it("reads key_file relative to the config directory, or from ~/", async () => {
-    for (const keyFile of ["keys/my.pem", "~/.config/mizcode-reviewer/keys/my.pem"]) {
-      const homeDir = home({ "config.json": JSON.stringify({ app_id: 1, key_file: keyFile }) });
-      const keys = join(homeDir, ".config", "mizcode-reviewer", "keys");
-      mkdirSync(keys, { recursive: true });
-      writeFileSync(join(keys, "my.pem"), rsaKey);
-      const { code, error } = await failure(["7", "--repo", "acme/widgets"], {
-        homeDir,
-        responses: [{ status: 404, body: { message: "Not Found" } }],
-      });
-      expect(error?.error).toBe("not_installed");
-      expect(code).toBe(1);
-    }
-  });
-
-  it("exits 1 with not_installed and makes no workdir", async () => {
+  it("exits 1 with not_installed, the install link and no workdir when GitHub cannot find the PR", async () => {
     const { code, error, tmp } = await failure(["7", "--repo", "acme/widgets"], {
       responses: [{ status: 404, body: { message: "Not Found" } }],
     });
 
     expect(code).toBe(1);
-    expect(error).toEqual({ error: "not_installed", message: expect.stringContaining("acme/widgets") });
+    expect(error).toEqual({
+      error: "not_installed",
+      message:
+        "Could not read acme/widgets#7. Check the pull request number, and that mizcode-reviewer[bot] is installed on acme/widgets: https://github.com/apps/mizcode-reviewer/installations/new",
+    });
     expect(readdirSync(tmp)).toEqual([]);
   });
 
-  it("exits 1 with github_error, the status and what to check when the PR is not found", async () => {
+  it("exits 1 with github_error and the status for any other GitHub failure", async () => {
     const { code, error } = await failure(["7", "--repo", "acme/widgets"], {
-      responses: [installation, token, { status: 404, body: { message: "Not Found" } }],
+      responses: [{ status: 502, body: { message: "Bad Gateway" } }],
     });
 
     expect(code).toBe(1);
     expect(error).toEqual({
       error: "github_error",
-      message: "GitHub returned 404: Not Found. Check --repo and the pull request number.",
-      status: 404,
+      message: "GitHub returned 502: Bad Gateway. GitHub had a problem. Try again in a few minutes.",
+      status: 502,
     });
   });
 
@@ -546,7 +502,7 @@ describe("gather errors", () => {
       fetch: async () => {
         throw new TypeError("fetch failed", { cause: new Error("getaddrinfo ENOTFOUND api.github.com") });
       },
-      home: home(),
+      home: signedIn(),
       cwd: newDir("not-a-repo"),
       tmpdir: newDir("tmp"),
     });
