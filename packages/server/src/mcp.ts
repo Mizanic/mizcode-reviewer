@@ -19,10 +19,13 @@ import {
 export interface McpConfig {
   appId: string;
   privateKey: string;
-  // The GitHub login of the user who sent the request, or null. Null returns
-  // 401 before any MCP handling.
+  // The GitHub login of the user who sent the request, or null. A request
+  // that calls a tool gets 401 before any MCP handling when this is null.
   authenticate(request: Request): Promise<string | null>;
   github?: ClientOptions;
+  // One line per tool call: who called it, for which pull request, and the
+  // outcome. Never the token.
+  log?: (line: string) => void;
 }
 
 const side = z.enum(["LEFT", "RIGHT"]);
@@ -92,15 +95,17 @@ function toComment(input: SubmitReviewInput["comments"][number]): ReviewComment 
   return out;
 }
 
-// login is the user the request came from. The review posts only if that
-// user can write to the repo.
-export function createMcpServer(config: McpConfig, login: string): McpServer {
+// login is the user the request came from, or null when the request calls no
+// tool. The review posts only if that user can write to the repo.
+export function createMcpServer(config: McpConfig, login: string | null): McpServer {
   const server = new McpServer({ name: "mizcode-reviewer", version: "0.0.0" });
   server.registerTool(
     "submit_review",
     { title: "Submit review", description: DESCRIPTION, inputSchema: submitReviewInput },
     async (input) => {
+      if (login === null) return result({ error: "unauthorized", message: "Missing or invalid access token." }, true);
       const [owner, name] = input.repo.split("/") as [string, string];
+      const where = `${input.repo}#${input.pull_number}`;
       try {
         const posted = await postReviewAsApp(
           {
@@ -114,9 +119,13 @@ export function createMcpServer(config: McpConfig, login: string): McpServer {
           },
           config.github,
         );
+        config.log?.(`submit_review ${login} ${where} posted ${posted.html_url}`);
         return result({ ...posted });
       } catch (error) {
-        return errorResult(error);
+        const failed = errorResult(error);
+        const code = (JSON.parse((failed.content[0] as { text: string }).text) as { error: string }).error;
+        config.log?.(`submit_review ${login} ${where} ${code}`);
+        return failed;
       }
     },
   );
@@ -137,10 +146,36 @@ export function githubUserAuth(
   };
 }
 
+// True if the JSON-RPC message, or any message in a batch, calls a tool.
+function callsTool(body: unknown): boolean {
+  const messages = Array.isArray(body) ? body : [body];
+  return messages.some(
+    (message) => typeof message === "object" && message !== null && (message as { method?: unknown }).method === "tools/call",
+  );
+}
+
+// Connecting and listing the tool need no token, so an AI tool that starts
+// before the user signs in still shows submit_review. Calling it needs one.
+// The 401 makes Claude Code and Codex run their headers helper again and
+// retry the call with the token the user just signed in for.
 export async function handleMcpRequest(request: Request, config: McpConfig): Promise<Response> {
-  const login = await config.authenticate(request);
-  if (login === null) {
-    return Response.json({ error: "unauthorized", message: "Missing or invalid access token." }, { status: 401 });
+  let body: unknown;
+  if (request.method === "POST") {
+    try {
+      body = JSON.parse(await request.text());
+    } catch {
+      return Response.json(
+        { jsonrpc: "2.0", error: { code: -32700, message: "Parse error" }, id: null },
+        { status: 400 },
+      );
+    }
+  }
+  let login: string | null = null;
+  if (callsTool(body)) {
+    login = await config.authenticate(request);
+    if (login === null) {
+      return Response.json({ error: "unauthorized", message: "Missing or invalid access token." }, { status: 401 });
+    }
   }
   const server = createMcpServer(config, login);
   const transport = new WebStandardStreamableHTTPServerTransport({
@@ -149,7 +184,7 @@ export async function handleMcpRequest(request: Request, config: McpConfig): Pro
   });
   await server.connect(transport);
   try {
-    return await transport.handleRequest(request);
+    return await transport.handleRequest(request, request.method === "POST" ? { parsedBody: body } : undefined);
   } finally {
     await server.close();
   }

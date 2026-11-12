@@ -53,7 +53,7 @@ function config(github: ClientOptions = mockGitHub().options): McpConfig {
 // An MCP client whose HTTP requests go straight to handleMcpRequest.
 async function connect(cfg: McpConfig, authorization = TOKEN): Promise<Client> {
   const transport = new StreamableHTTPClientTransport(new URL("http://mcp.test/mcp"), {
-    requestInit: { headers: { authorization } },
+    requestInit: { headers: authorization ? { authorization } : {} },
     fetch: (url, init) => handleMcpRequest(new Request(url, init), cfg),
   });
   const client = new Client({ name: "test", version: "0.0.0" });
@@ -273,20 +273,74 @@ describe("submit_review MCP server", () => {
     expect(String(response.json?.message)).toContain("ENOTFOUND");
   });
 
-  it("returns 401 unauthorized before any MCP handling when the token is wrong", async () => {
+  function rpc(message: unknown, authorization?: string): Request {
+    const headers: Record<string, string> = {
+      "content-type": "application/json",
+      accept: "application/json, text/event-stream",
+    };
+    if (authorization) headers.authorization = authorization;
+    return new Request("http://mcp.test/mcp", { method: "POST", headers, body: JSON.stringify(message) });
+  }
+
+  it("lists the tool without a token, so an AI tool started before sign-in still shows it", async () => {
+    const github = mockGitHub();
+    const client = await connect(config(github.options), "");
+    const { tools } = await client.listTools();
+    await client.close();
+
+    expect(tools.map((tool) => tool.name)).toEqual(["submit_review"]);
+    expect(github.calls).toHaveLength(0);
+  });
+
+  it.each([
+    ["no token", undefined],
+    ["a wrong token", "Bearer wrong"],
+  ])("returns 401 unauthorized before any MCP handling for a tool call with %s", async (_name, authorization) => {
     const github = mockGitHub();
     const response = await handleMcpRequest(
-      new Request("http://mcp.test/mcp", {
-        method: "POST",
-        headers: { authorization: "Bearer wrong", "content-type": "application/json" },
-        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" }),
-      }),
+      rpc({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "submit_review", arguments: input } }, authorization),
       config(github.options),
     );
 
     expect(response.status).toBe(401);
     expect(await response.json()).toEqual({ error: "unauthorized", message: "Missing or invalid access token." });
     expect(github.calls).toHaveLength(0);
+  });
+
+  it("returns 401 for a batch that hides a tool call among other messages", async () => {
+    const response = await handleMcpRequest(
+      rpc([
+        { jsonrpc: "2.0", id: 1, method: "tools/list" },
+        { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "submit_review", arguments: input } },
+      ]),
+      config(),
+    );
+
+    expect(response.status).toBe(401);
+  });
+
+  it("answers a body that is not JSON with a JSON-RPC parse error", async () => {
+    const response = await handleMcpRequest(
+      new Request("http://mcp.test/mcp", { method: "POST", headers: { "content-type": "application/json" }, body: "{" }),
+      config(),
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ jsonrpc: "2.0", error: { code: -32700, message: "Parse error" }, id: null });
+  });
+
+  it("logs the user, the pull request and the outcome of each call, and never the token", async () => {
+    const lines: string[] = [];
+    const posting = mockGitHub([installation, token, canWrite, pull, app, noReviews, posted]);
+    await submit({ ...config(posting.options), log: (line) => lines.push(line) }, input);
+    const refused = mockGitHub([installation, token, { status: 200, body: { permission: "read" } }]);
+    await submit({ ...config(refused.options), log: (line) => lines.push(line) }, input);
+
+    expect(lines).toEqual([
+      "submit_review ali acme/widgets#7 posted https://github.com/acme/widgets/pull/7#pullrequestreview-123",
+      "submit_review ali acme/widgets#7 no_access",
+    ]);
+    expect(lines.join("\n")).not.toContain("test-token");
   });
 });
 
