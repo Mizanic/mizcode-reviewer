@@ -1,4 +1,4 @@
-import { readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { CLIENT_ID } from "../src/signin.js";
@@ -11,12 +11,11 @@ function tokenFile(dir: string): string {
   return join(dir, ".config", "mizcode-reviewer", "token.json");
 }
 
-// Options with a fake clock that sleep moves forward, and the progress text.
+// Options with a fake clock that sleep moves forward.
 function setup(responses: Array<{ status: number; body: unknown }>) {
   const github = mockGitHub(responses);
   let clock = T0;
   const sleeps: number[] = [];
-  const progress: string[] = [];
   const dir = home({});
   const options = {
     ...github.options,
@@ -26,9 +25,8 @@ function setup(responses: Array<{ status: number; body: unknown }>) {
       sleeps.push(ms);
       clock += ms;
     },
-    progress: (text: string) => progress.push(text),
   };
-  return { github, options, sleeps, progress, dir, advance: (ms: number) => (clock += ms) };
+  return { github, options, sleeps, dir };
 }
 
 const device = {
@@ -53,16 +51,41 @@ const granted = {
   },
 };
 
+function pendingFile(dir: string): string {
+  return join(dir, ".config", "mizcode-reviewer", "login.json");
+}
+
 describe("review.js login", () => {
-  it("shows the code, waits for it to be entered, and saves the token for this user only", async () => {
-    const { github, options, sleeps, progress, dir } = setup([device, pending, granted]);
+  it("prints the code and the URL, ends at once, and keeps the device code for --wait", async () => {
+    const { github, options, sleeps, dir } = setup([device]);
 
     const result = await run(["login"], options);
 
     expect(result.code).toBe(0);
-    expect(progress.join("")).toBe("Open https://github.com/login/device on any device and enter the code ABCD-1234\n");
-    expect(sleeps).toEqual([5000, 5000]);
+    expect(JSON.parse(result.stdout)).toEqual({
+      verification_uri: "https://github.com/login/device",
+      user_code: "ABCD-1234",
+      expires_in: 900,
+    });
+    expect(sleeps).toEqual([]);
     expect(github.calls[0]).toMatchObject({ url: "https://github.com/login/device/code", body: { client_id: CLIENT_ID } });
+    expect(JSON.parse(readFileSync(pendingFile(dir), "utf8"))).toEqual({
+      device_code: "dev123",
+      interval: 5,
+      expires_at: T0 + 900 * 1000,
+    });
+    expect(statSync(pendingFile(dir)).mode & 0o777).toBe(0o600);
+  });
+
+  it("--wait saves the token for this user only once the code is entered", async () => {
+    const { github, options, sleeps, dir } = setup([device, pending, granted]);
+    await run(["login"], options);
+
+    const result = await run(["login", "--wait"], options);
+
+    expect(result.code).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({ status: "signed_in", token_file: tokenFile(dir) });
+    expect(sleeps).toEqual([5000, 5000]);
     expect(github.calls[1]?.body).toEqual({
       client_id: CLIENT_ID,
       device_code: "dev123",
@@ -75,34 +98,73 @@ describe("review.js login", () => {
       refresh_token_expires_at: T0 + 10000 + 15897600 * 1000,
     });
     expect(statSync(tokenFile(dir)).mode & 0o777).toBe(0o600);
-    expect(JSON.parse(result.stdout)).toEqual({ signed_in: true, token_file: tokenFile(dir) });
+    expect(existsSync(pendingFile(dir))).toBe(false);
   });
 
-  it("waits longer when GitHub says slow_down", async () => {
-    const { options, sleeps } = setup([device, { status: 200, body: { error: "slow_down", interval: 10 } }, granted]);
+  it("--wait reports waiting after 100 seconds and keeps the device code for the next call", async () => {
+    const { options, sleeps, dir } = setup([device, ...Array.from({ length: 20 }, () => pending)]);
+    await run(["login"], options);
 
-    expect((await run(["login"], options)).code).toBe(0);
+    const result = await run(["login", "--wait"], options);
+
+    expect(result.code).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({ status: "waiting" });
+    expect(sleeps.reduce((a, b) => a + b, 0)).toBe(100 * 1000);
+    expect(existsSync(pendingFile(dir))).toBe(true);
+  });
+
+  it("--wait waits longer when GitHub says slow_down", async () => {
+    const { options, sleeps } = setup([device, { status: 200, body: { error: "slow_down", interval: 10 } }, granted]);
+    await run(["login"], options);
+
+    expect((await run(["login", "--wait"], options)).code).toBe(0);
     expect(sleeps).toEqual([5000, 10000]);
   });
 
-  it("fails with sign_in_failed when the user cancels on GitHub", async () => {
-    const { options } = setup([device, { status: 200, body: { error: "access_denied" } }]);
+  it("--wait keeps the longer slow_down interval for the next --wait call", async () => {
+    const slowDown = { status: 200, body: { error: "slow_down", interval: 10 } };
+    const { options, sleeps, dir } = setup([device, slowDown, ...Array.from({ length: 12 }, () => pending), granted]);
+    await run(["login"], options);
 
-    const result = await run(["login"], options);
+    expect(JSON.parse((await run(["login", "--wait"], options)).stdout)).toEqual({ status: "waiting" });
+    expect(JSON.parse(readFileSync(pendingFile(dir), "utf8")).interval).toBe(10);
+    sleeps.length = 0;
+    expect(JSON.parse((await run(["login", "--wait"], options)).stdout).status).toBe("signed_in");
+    expect(sleeps.every((ms) => ms === 10000)).toBe(true);
+  });
+
+  it("--wait fails with sign_in_failed when the user cancels on GitHub", async () => {
+    const { options, dir } = setup([device, { status: 200, body: { error: "access_denied" } }]);
+    await run(["login"], options);
+
+    const result = await run(["login", "--wait"], options);
 
     expect(result.code).toBe(1);
     expect(result.error).toEqual({ error: "sign_in_failed", message: "The sign-in was cancelled on GitHub." });
+    expect(existsSync(pendingFile(dir))).toBe(false);
   });
 
-  it("fails with sign_in_failed when the code expires", async () => {
+  it("--wait fails with sign_in_failed when the code expires", async () => {
     const short = { status: 200, body: { ...device.body, expires_in: 8 } };
-    const { options } = setup([short, pending, pending]);
+    const { options, dir } = setup([short, pending, pending]);
+    await run(["login"], options);
 
-    const result = await run(["login"], options);
+    const result = await run(["login", "--wait"], options);
 
     expect(result.code).toBe(1);
     expect(result.error?.error).toBe("sign_in_failed");
     expect(String(result.error?.message)).toContain("expired");
+    expect(existsSync(pendingFile(dir))).toBe(false);
+  });
+
+  it("--wait without a login first is bad_input", async () => {
+    const { options, github } = setup([]);
+
+    const result = await run(["login", "--wait"], options);
+
+    expect(result.code).toBe(2);
+    expect(result.error?.message).toBe("There is no sign-in in progress. Run review.js login first.");
+    expect(github.calls).toHaveLength(0);
   });
 
   it("fails with sign_in_failed when device sign-in is turned off for the App", async () => {

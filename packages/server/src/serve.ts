@@ -63,7 +63,12 @@ const server = createServer((message, reply) => {
       const request = await toRequest(message);
       const response =
         new URL(request.url).pathname === "/mcp"
-          ? await handleMcpRequest(request, { appId, privateKey, authenticate })
+          ? await handleMcpRequest(request, {
+              appId,
+              privateKey,
+              authenticate,
+              log: (line) => process.stderr.write(`${new Date().toISOString()} ${line}\n`),
+            })
           : new Response("Not found\n", { status: 404 });
       reply.writeHead(response.status, Object.fromEntries(response.headers));
       reply.end(Buffer.from(await response.arrayBuffer()));

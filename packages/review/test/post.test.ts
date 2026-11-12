@@ -86,7 +86,13 @@ async function dryRun(findings: unknown, suspicions?: unknown) {
   expect(out.stderr).toBe("");
   expect(out.code).toBe(0);
   expect(github.calls).toEqual([]);
-  return JSON.parse(out.stdout) as { commit_id: string; event: string; body: string; comments: Array<Record<string, unknown>> };
+  return JSON.parse(out.stdout) as {
+    repo: string;
+    pull_number: number;
+    commit_sha: string;
+    body: string;
+    comments: Array<Record<string, unknown>>;
+  };
 }
 
 const row = (overrides: Partial<Finding> = {}): Finding => ({
@@ -274,8 +280,9 @@ describe("post: dry run", () => {
   it("prints the all-clear review for no findings and calls nothing", async () => {
     const review = await dryRun([]);
     expect(review).toEqual({
-      commit_id: sha,
-      event: "COMMENT",
+      repo: "acme/widgets",
+      pull_number: 7,
+      commit_sha: sha,
       body: "> [!NOTE]\n> 🤖 Reviewed by Claude/Opus-5\n\nReviewed `1e43c532b8` — no new issues found.\n\n<!-- rehanhaider/pr-review-skill -->\n",
       comments: [],
     });
@@ -407,7 +414,7 @@ describe("post: posting", () => {
       { ...github.options, cwd, home: home() },
     );
     expect(out.code).toBe(0);
-    expect(JSON.parse(out.stdout).commit_id).toBe(sha);
+    expect(JSON.parse(out.stdout).commit_sha).toBe(sha);
   });
 });
 
