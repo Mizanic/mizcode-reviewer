@@ -363,7 +363,7 @@ server is not set up: stop, report the findings, and say so.
 
 | Error | What to do |
 | --- | --- |
-| `unauthorized` | The sign-in token is missing or was revoked. Sign in as in step 1, then call `submit_review` again |
+| `unauthorized`, or HTTP 403 | The sign-in token is missing or was revoked. Sign in as in step 1, then call `submit_review` again |
 | `not_installed` | mizcode-reviewer[bot] is not installed on the repository. Report it with the message |
 | `no_access` | The signed-in user cannot write to the repository. Report it; nothing was posted |
 | `head_moved` | See below |

@@ -20,7 +20,7 @@ export interface McpConfig {
   appId: string;
   privateKey: string;
   // The GitHub login of the user who sent the request, or null. A request
-  // that calls a tool gets 401 before any MCP handling when this is null.
+  // that calls a tool gets 403 before any MCP handling when this is null.
   authenticate(request: Request): Promise<string | null>;
   github?: ClientOptions;
   // One line per tool call: who called it, for which pull request, and the
@@ -156,8 +156,10 @@ function callsTool(body: unknown): boolean {
 
 // Connecting and listing the tool need no token, so an AI tool that starts
 // before the user signs in still shows submit_review. Calling it needs one.
-// The 401 makes Claude Code and Codex run their headers helper again and
-// retry the call with the token the user just signed in for.
+// A missing or bad token gets 403, not 401: on a 401 an MCP client starts
+// its own OAuth sign-in against this server, which has none. On a 403
+// Claude Code and Codex run their headers helper again and retry the call
+// once, with the token the user signed in for after the client connected.
 export async function handleMcpRequest(request: Request, config: McpConfig): Promise<Response> {
   let body: unknown;
   if (request.method === "POST") {
@@ -174,7 +176,10 @@ export async function handleMcpRequest(request: Request, config: McpConfig): Pro
   if (callsTool(body)) {
     login = await config.authenticate(request);
     if (login === null) {
-      return Response.json({ error: "unauthorized", message: "Missing or invalid access token." }, { status: 401 });
+      return Response.json(
+        { error: "unauthorized", message: "Missing or invalid access token. Run review.js login, then call again." },
+        { status: 403 },
+      );
     }
   }
   const server = createMcpServer(config, login);

@@ -295,19 +295,23 @@ describe("submit_review MCP server", () => {
   it.each([
     ["no token", undefined],
     ["a wrong token", "Bearer wrong"],
-  ])("returns 401 unauthorized before any MCP handling for a tool call with %s", async (_name, authorization) => {
+  ])("returns 403 unauthorized, not 401, before any MCP handling for a tool call with %s", async (_name, authorization) => {
     const github = mockGitHub();
     const response = await handleMcpRequest(
       rpc({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "submit_review", arguments: input } }, authorization),
       config(github.options),
     );
 
-    expect(response.status).toBe(401);
-    expect(await response.json()).toEqual({ error: "unauthorized", message: "Missing or invalid access token." });
+    expect(response.status).toBe(403);
+    expect(response.headers.has("www-authenticate")).toBe(false);
+    expect(await response.json()).toEqual({
+      error: "unauthorized",
+      message: "Missing or invalid access token. Run review.js login, then call again.",
+    });
     expect(github.calls).toHaveLength(0);
   });
 
-  it("returns 401 for a batch that hides a tool call among other messages", async () => {
+  it("returns 403 for a batch that hides a tool call among other messages", async () => {
     const response = await handleMcpRequest(
       rpc([
         { jsonrpc: "2.0", id: 1, method: "tools/list" },
@@ -316,7 +320,7 @@ describe("submit_review MCP server", () => {
       config(),
     );
 
-    expect(response.status).toBe(401);
+    expect(response.status).toBe(403);
   });
 
   it("answers a body that is not JSON with a JSON-RPC parse error", async () => {

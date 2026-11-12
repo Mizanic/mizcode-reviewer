@@ -254,7 +254,7 @@ export async function userToken(options: RunOptions): Promise<string> {
 }
 
 // The MCP client runs this before it connects. It must never fail: with no
-// usable token it prints {} and the server answers 401.
+// usable token it prints {} and the server answers 403 to a tool call.
 export async function token(argv: string[], options: RunOptions): Promise<string> {
   if (parseFlags(argv, "token").help) return TOKEN_USAGE;
   let value: string | null;
