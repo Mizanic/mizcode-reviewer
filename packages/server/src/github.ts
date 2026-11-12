@@ -10,7 +10,7 @@ const API_URL = "https://api.github.com";
 const API_VERSION = "2022-11-28";
 const USER_AGENT = "mizcode-reviewer";
 
-export type ErrorCode = "not_installed" | "github_error" | "head_moved";
+export type ErrorCode = "not_installed" | "github_error" | "head_moved" | "no_access";
 
 export class GitHubClientError extends Error {
   readonly code: ErrorCode;
@@ -406,6 +406,60 @@ export async function assertHead(
   }
 }
 
+// GitHub reports maintain as write and triage as read, so write and admin
+// are the two values that allow a post.
+export async function assertCanWrite(
+  repo: Repo,
+  login: string,
+  token: string,
+  options: ClientOptions = {},
+): Promise<void> {
+  const response = await request(
+    options,
+    "GET",
+    `${repoPath(repo)}/collaborators/${encodeURIComponent(login)}/permission`,
+    token,
+  );
+  let permission = "none";
+  if (response.status !== 404) permission = (await json<{ permission: string }>(response)).permission;
+  if (permission !== "write" && permission !== "admin") {
+    throw new GitHubClientError(
+      "no_access",
+      `${login} has ${permission} permission on ${repo.owner}/${repo.name}. Posting a review needs write permission.`,
+    );
+  }
+}
+
+// Asks GitHub whether token is a user access token that the App with this
+// client ID issued, and returns the user's login, or null for any other
+// token. The check uses the App's client ID and secret, not the token itself.
+export async function checkUserToken(
+  clientId: string,
+  clientSecret: string,
+  token: string,
+  options: ClientOptions = {},
+): Promise<string | null> {
+  const doFetch = options.fetch ?? fetch;
+  const response = await doFetch(
+    `${options.baseUrl ?? API_URL}/applications/${encodeURIComponent(clientId)}/token`,
+    {
+      method: "POST",
+      headers: {
+        Accept: "application/vnd.github+json",
+        Authorization: `Basic ${Buffer.from(`${clientId}:${clientSecret}`).toString("base64")}`,
+        "Content-Type": "application/json",
+        "User-Agent": USER_AGENT,
+        "X-GitHub-Api-Version": API_VERSION,
+      },
+      body: JSON.stringify({ access_token: token }),
+    },
+  );
+  if (response.status === 404) return null;
+  const checked = await json<{ app?: { client_id?: string }; user?: { login?: string } | null }>(response);
+  if (checked.app?.client_id !== clientId || typeof checked.user?.login !== "string") return null;
+  return checked.user.login;
+}
+
 // The event is always COMMENT. This client never approves or requests changes.
 export async function postReview(
   repo: Repo,
@@ -536,6 +590,10 @@ export interface PostReviewAsAppInput {
   pullNumber: number;
   sha: string;
   review: Review;
+  // The GitHub login the review is posted for. If set, the post is refused
+  // with no_access unless this user has write, maintain or admin permission
+  // on the repo.
+  forUser?: string;
 }
 
 // The whole flow: sign in as the App, get a token for the repo, refuse a moved
@@ -549,6 +607,7 @@ export async function postReviewAsApp(
   const appJwt = createAppJwt(input.appId, input.privateKey);
   const installationId = await getInstallationId(input.repo, appJwt, options);
   const token = await createInstallationToken(installationId, input.repo, appJwt, options);
+  if (input.forUser !== undefined) await assertCanWrite(input.repo, input.forUser, token, options);
   await assertHead(input.repo, input.pullNumber, input.sha, token, options);
   const login = await getAppLogin(appJwt, options);
   const existing = await findPostedReview(input.repo, input.pullNumber, input.sha, input.review, login, token, options);
