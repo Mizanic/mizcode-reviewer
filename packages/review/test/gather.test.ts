@@ -470,6 +470,16 @@ describe("gather errors", () => {
     expect(readdirSync(tmp)).toEqual([]);
   });
 
+  it("exits 4 with not_signed_in and no workdir when GitHub rejects the saved token", async () => {
+    const { code, error, tmp } = await failure(["7", "--repo", "acme/widgets"], {
+      responses: [{ status: 401, body: { message: "Bad credentials" } }],
+    });
+
+    expect(code).toBe(4);
+    expect(error).toEqual({ error: "not_signed_in", message: "GitHub rejected the saved sign-in. Run review.js login." });
+    expect(readdirSync(tmp)).toEqual([]);
+  });
+
   it("exits 1 with not_installed, the install link and no workdir when GitHub cannot find the PR", async () => {
     const { code, error, tmp } = await failure(["7", "--repo", "acme/widgets"], {
       responses: [{ status: 404, body: { message: "Not Found" } }],

@@ -121,6 +121,18 @@ describe("review.js login", () => {
     expect(sleeps).toEqual([5000, 10000]);
   });
 
+  it("--wait keeps the longer slow_down interval for the next --wait call", async () => {
+    const slowDown = { status: 200, body: { error: "slow_down", interval: 10 } };
+    const { options, sleeps, dir } = setup([device, slowDown, ...Array.from({ length: 12 }, () => pending), granted]);
+    await run(["login"], options);
+
+    expect(JSON.parse((await run(["login", "--wait"], options)).stdout)).toEqual({ status: "waiting" });
+    expect(JSON.parse(readFileSync(pendingFile(dir), "utf8")).interval).toBe(10);
+    sleeps.length = 0;
+    expect(JSON.parse((await run(["login", "--wait"], options)).stdout).status).toBe("signed_in");
+    expect(sleeps.every((ms) => ms === 10000)).toBe(true);
+  });
+
   it("--wait fails with sign_in_failed when the user cancels on GitHub", async () => {
     const { options, dir } = setup([device, { status: 200, body: { error: "access_denied" } }]);
     await run(["login"], options);

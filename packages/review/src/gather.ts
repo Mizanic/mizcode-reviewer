@@ -17,7 +17,7 @@ import {
   type ReviewThread,
 } from "../../server/src/index.js";
 import { BadInput } from "./config.js";
-import { userToken } from "./signin.js";
+import { NotSignedIn, userToken } from "./signin.js";
 import { localDiff, makeWorktree, originRepo } from "./git.js";
 import type { RunOptions } from "./review.js";
 
@@ -114,6 +114,10 @@ export async function gather(argv: string[], options: RunOptions): Promise<strin
   try {
     pull = await getPullRequest(repo, pullNumber, token, options);
   } catch (error) {
+    // A revoked token still looks valid in token.json until GitHub refuses it.
+    if (error instanceof GitHubClientError && error.status === 401) {
+      throw new NotSignedIn("GitHub rejected the saved sign-in. Run review.js login.");
+    }
     if (error instanceof GitHubClientError && error.status === 404) {
       throw new GitHubClientError(
         "not_installed",

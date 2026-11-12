@@ -66,7 +66,8 @@ ran outside a clone whose remote is the pull request's repository. Run it again
 from such a clone. If there is none, review from `diff.patch` alone and name
 every file you could not read in the coverage report (step 9).
 
-If gather exits 4 with `not_signed_in`, sign the user in, once per machine:
+If gather exits 4 with `not_signed_in`, sign the user in. This happens once per
+machine, and again if GitHub rejects the saved sign-in:
 
 1. Run `node <skill>/scripts/review.js login`. It prints
    `{"verification_uri", "user_code", "expires_in"}` and ends.

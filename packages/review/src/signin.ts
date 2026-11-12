@@ -203,6 +203,9 @@ async function waitForLogin(options: RunOptions): Promise<string> {
     if (response.error === "authorization_pending") continue;
     if (response.error === "slow_down") {
       interval = (response.interval ?? interval / 1000 + 5) * 1000;
+      // Keep the longer interval for the next --wait call too.
+      pending = { ...pending, interval: interval / 1000 };
+      await writePrivate(pendingPath(options), pending);
       continue;
     }
     await rm(pendingPath(options), { force: true });
