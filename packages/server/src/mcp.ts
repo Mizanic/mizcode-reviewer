@@ -160,17 +160,22 @@ function callsTool(body: unknown): boolean {
 // its own OAuth sign-in against this server, which has none. On a 403
 // Claude Code and Codex run their headers helper again and retry the call
 // once, with the token the user signed in for after the client connected.
+//
+// Only POST is served. A GET asks for a stream of server messages, which a
+// stateless server never sends, and a Lambda can't hold one open, so it gets
+// 405: MCP clients then stop asking.
 export async function handleMcpRequest(request: Request, config: McpConfig): Promise<Response> {
+  if (request.method !== "POST") {
+    return new Response(null, { status: 405, headers: { Allow: "POST" } });
+  }
   let body: unknown;
-  if (request.method === "POST") {
-    try {
-      body = JSON.parse(await request.text());
-    } catch {
-      return Response.json(
-        { jsonrpc: "2.0", error: { code: -32700, message: "Parse error" }, id: null },
-        { status: 400 },
-      );
-    }
+  try {
+    body = JSON.parse(await request.text());
+  } catch {
+    return Response.json(
+      { jsonrpc: "2.0", error: { code: -32700, message: "Parse error" }, id: null },
+      { status: 400 },
+    );
   }
   let login: string | null = null;
   if (callsTool(body)) {
@@ -189,7 +194,7 @@ export async function handleMcpRequest(request: Request, config: McpConfig): Pro
   });
   await server.connect(transport);
   try {
-    return await transport.handleRequest(request, request.method === "POST" ? { parsedBody: body } : undefined);
+    return await transport.handleRequest(request, { parsedBody: body });
   } finally {
     await server.close();
   }
