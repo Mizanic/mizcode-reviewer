@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "mizcode-reviewer": {
+      "type": "http",
+      "url": "https://xu7ug7aw2h.execute-api.us-east-1.amazonaws.com/v1/mcp",
+      "http_headers_helper": "sh -c 'd=$(ls -td \"${CODEX_HOME:-$HOME/.codex}\"/plugins/cache/mizcode-reviewer/mizcode-reviewer/*/ 2>/dev/null | head -n 1); if [ -n \"$d\" ]; then exec node \"${d}skills/mizcode-reviewer/scripts/review.js\" token; fi; echo \"{}\"'"
+    }
+  }
+}

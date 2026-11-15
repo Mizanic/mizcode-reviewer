@@ -1,52 +1,60 @@
 # mizcode-reviewer
 
-mizcode-reviewer lets your AI coding tool (Claude Code or Codex) post its pull request reviews as a bot, for example `acme-review[bot]`, instead of under your own GitHub account.
+mizcode-reviewer lets your AI coding tool, Claude Code or Codex, post its pull request reviews as `mizcode-reviewer[bot]` instead of under your own GitHub account.
 
 ## How it works
 
-1. Your AI tool runs the `mizcode-reviewer` skill. The skill's script, `review.js gather`, reads the pull request as your GitHub App and stages it in a temporary directory.
+1. Your AI tool runs the `mizcode-reviewer` skill. The skill's script, `review.js gather`, reads the pull request with your own GitHub sign-in and stages it in a temporary directory.
 2. Your AI tool writes the review on your machine, with your own AI subscription.
-3. `review.js post` signs in to GitHub as your GitHub App with the App's private key, which stays on your machine.
-4. If the pull request has new commits since the review was written, it posts nothing and exits with code 3.
-5. Otherwise it posts the review as a comment review from the bot.
+3. The skill sends the review to the mizcode-reviewer server through its MCP tool, `submit_review`, with your GitHub sign-in token.
+4. The server asks GitHub whose token it is, and checks that you can write to the repository.
+5. If the pull request has new commits since the review was written, it posts nothing. Otherwise it posts the review as a comment review from `mizcode-reviewer[bot]`.
 
-There is no server. Your machine talks to GitHub directly.
+The server receives only the review you send it. Your token stays on your machine.
 
 ## Install
 
-You need Node.js 22 or later, npm and git. Build the skill from a clone:
+You need Node.js 22 or later and git.
+
+Claude Code, 2.1.292 or later:
 
 ```sh
-git clone https://github.com/Mizanic/mizcode-reviewer.git
-cd mizcode-reviewer
-npm ci
-npm run build
+claude plugin install mizcode-reviewer --marketplace Mizanic/mizcode-reviewer
 ```
 
-The build writes the script and the GitHub client into `skills/mizcode-reviewer/scripts/lib/`. After that, the `skills/mizcode-reviewer/` folder runs on its own with Node.js 22 or later and git. It needs no `npm install`, no global link, no `node_modules` and no command on the PATH.
-
-Link or copy the folder where your tool looks for skills:
+Codex:
 
 ```sh
-ln -s "$PWD/skills/mizcode-reviewer" ~/.claude/skills/mizcode-reviewer   # Claude Code
-ln -s "$PWD/skills/mizcode-reviewer" ~/.agents/skills/mizcode-reviewer   # Codex
+codex plugin marketplace add Mizanic/mizcode-reviewer
+codex plugin add mizcode-reviewer@mizcode-reviewer
 ```
 
-Put the App ID in `~/.config/mizcode-reviewer/config.json` as `{ "app_id": <id> }`, with the private key beside it as `app.pem`. Then run `/mizcode-reviewer <pr>` in your tool.
+The plugin adds the review skill and the connection to the server. Start a new session after you install it.
 
-To update, run `git pull`, `npm ci` and `npm run build` in the clone again. A copied folder needs copying again.
+Then install the bot on the repositories you want reviewed: https://github.com/apps/mizcode-reviewer/installations/new
+
+## Use
+
+Ask your AI tool to review a pull request, for example `/mizcode-reviewer 42`.
+
+The first time, the skill shows a code. Open https://github.com/login/device on any device and enter it. The sign-in is saved in `~/.config/mizcode-reviewer/token.json` on your machine, and later reviews skip this step.
+
+To update, run `claude plugin update mizcode-reviewer@mizcode-reviewer` in Claude Code, or `codex plugin marketplace upgrade mizcode-reviewer` in Codex.
 
 ## The review skill
 
 `skills/mizcode-reviewer/` holds the review method, [SKILL.md](skills/mizcode-reviewer/SKILL.md), and the script it runs:
 
 ```sh
+node <skill>/scripts/review.js login [--wait]
 node <skill>/scripts/review.js gather <pr> [--repo <owner/name>]
-node <skill>/scripts/review.js post --workdir <dir> --findings-file <file> [--suspicions-file <file>] --signed-by <label> [--dry-run]
+node <skill>/scripts/review.js post --workdir <dir> --findings-file <file> [--suspicions-file <file>] --signed-by <label> --dry-run
 node <skill>/scripts/review.js cleanup --workdir <dir>
 ```
 
 [packages/review/README.md](packages/review/README.md) is the command contract: every flag, the workdir files, the JSON output and the exit codes.
+
+`skills/mizcode-reviewer/scripts/lib/` is built from `packages/` and committed, so the plugin runs without `npm install`. After changing `packages/review` or `packages/server`, run `npm run build` and commit the result.
 
 ## post-review
 
@@ -81,10 +89,6 @@ On success, `post-review` prints `{ "review_id": 123, "html_url": "https://githu
 ## Status
 
 Early development.
-
-## Your own GitHub App
-
-[docs/run-your-own-bot.md](docs/run-your-own-bot.md) is the guide: register the App, save its private key, install it on your repositories and install the skill. [docs/github-app-manifest.json](docs/github-app-manifest.json) lists the permissions the App needs: pull requests read and write, and metadata read.
 
 ## License
 

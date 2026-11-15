@@ -1,0 +1,129 @@
+// The review.js command: pick the subcommand, run it, and print its
+// result or a JSON error. runReview returns the exit code instead of exiting,
+// so tests can call it.
+import { GitHubClientError } from "../../server/src/index.js";
+import { agent } from "./agent.js";
+import { GitFailed, cleanup } from "./cleanup.js";
+import { AgentFailed, BadInput, NotConfigured, ReviewIncomplete } from "./config.js";
+import { gather } from "./gather.js";
+import { post } from "./post.js";
+import { NotSignedIn, SignInFailed, login, token } from "./signin.js";
+export const USAGE = `Usage: review.js <command> [options]
+
+Commands:
+  gather <pr> [--repo <owner/name>]  Stage the pull request for review in a new temp workdir
+  agent <cursor|opencode> --workdir <dir>
+                                     Have Cursor or OpenCode review the staged pull request
+                                     and write findings.json and suspicions.json
+  post --workdir <dir> --findings-file <file> [--suspicions-file <file>] --signed-by <label> [--dry-run]
+                                     Post the review to the pull request as the App
+  cleanup --workdir <dir>            Remove the worktree gather made
+  login [--wait]                     Sign in to GitHub for the shared bot, once per machine
+  token                              Print the Authorization header for the shared bot's MCP server
+
+Run review.js <command> --help for a command's options.
+
+gather reads the pull request as the signed-in user: run login first. post
+without --dry-run posts with an App key from ~/.config/mizcode-reviewer/config.json
+({"app_id": <id>, "key_file": <path>}); the skill posts through the shared
+bot's submit_review MCP tool instead.
+
+Output is on stdout: JSON, or the review URL from post. Errors are
+{"error": "...", "message": "..."} on stderr.
+
+Exit codes:
+  0  done
+  1  not_installed, github_error, git_error, agent_error or sign_in_failed
+  2  bad_input
+  3  head_moved
+  4  not_configured or not_signed_in
+  5  review_incomplete
+`;
+const COMMANDS = {
+    gather,
+    agent,
+    post,
+    cleanup,
+    login,
+    token,
+};
+function withoutPeriod(text) {
+    return text.replace(/\.+$/, "");
+}
+function fail(output, exitCode, error) {
+    output.stderr(`${JSON.stringify(error)}\n`);
+    return exitCode;
+}
+function githubAdvice(status) {
+    if (status === 401) {
+        return "Check that key_file belongs to the App in app_id and that this machine's clock is correct.";
+    }
+    if (status === 403) {
+        return "Check that the App has pull requests read and write permission and that its installation includes this repository.";
+    }
+    if (status === 404)
+        return "Check --repo and the pull request number.";
+    if (status === 422)
+        return "Check that every finding's path and line are in the pull request diff.";
+    if (status !== undefined && status >= 500)
+        return "GitHub had a problem. Try again in a few minutes.";
+    return "Fix the cause GitHub names and run again.";
+}
+export async function runReview(argv, output, options = {}) {
+    const [name, ...rest] = argv;
+    if (name === "--help" || name === "-h") {
+        output.stdout(USAGE);
+        return 0;
+    }
+    if (name === undefined) {
+        return fail(output, 2, { error: "bad_input", message: "Give a command. Run review.js --help for usage." });
+    }
+    const command = COMMANDS[name];
+    if (!command) {
+        return fail(output, 2, {
+            error: "bad_input",
+            message: `Unknown command "${name}". Run review.js --help for usage.`,
+        });
+    }
+    try {
+        output.stdout(await command(rest, options));
+        return 0;
+    }
+    catch (error) {
+        if (error instanceof BadInput)
+            return fail(output, 2, { error: "bad_input", message: error.message });
+        if (error instanceof NotConfigured)
+            return fail(output, 4, { error: "not_configured", message: error.message });
+        if (error instanceof NotSignedIn)
+            return fail(output, 4, { error: "not_signed_in", message: error.message });
+        if (error instanceof GitFailed)
+            return fail(output, 1, { error: "git_error", message: error.message });
+        if (error instanceof AgentFailed)
+            return fail(output, 1, { error: "agent_error", message: error.message });
+        if (error instanceof ReviewIncomplete)
+            return fail(output, 5, { error: "review_incomplete", message: error.message });
+        if (error instanceof SignInFailed)
+            return fail(output, 1, { error: "sign_in_failed", message: error.message });
+        if (error instanceof GitHubClientError) {
+            if (error.code === "not_installed")
+                return fail(output, 1, { error: "not_installed", message: error.message });
+            if (error.code === "head_moved") {
+                return fail(output, 3, { error: "head_moved", message: error.message, current_head: error.currentHead });
+            }
+            return fail(output, 1, {
+                error: "github_error",
+                message: `${withoutPeriod(error.message)}. ${githubAdvice(error.status)}`,
+                status: error.status,
+            });
+        }
+        if (error instanceof TypeError && error.cause !== undefined) {
+            // fetch throws without an HTTP status when GitHub cannot be reached.
+            const cause = error.cause;
+            return fail(output, 1, {
+                error: "github_error",
+                message: `Could not complete the request to GitHub: ${withoutPeriod(cause.message ?? error.message)}. Check the network connection and run again.`,
+            });
+        }
+        throw error;
+    }
+}
