@@ -4,3 +4,4 @@ config.json
 dist/
 node_modules/
 skills/mizcode-reviewer/scripts/lib/
+cdk.out/
