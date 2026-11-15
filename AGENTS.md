@@ -1,15 +1,9 @@
 # Agent instructions
 
-## The review skill has a copy in aiman
+## The plugin ships the built skill
 
-The owner's skills repo, `rehanhaider/aiman`, carries a built copy of `skills/mizcode-reviewer/`, so `aiman sync` deploys the skill to the owner's machines. This copy is temporary. #38 removes it when the plugin ships.
+Claude Code and Codex install the `mizcode-reviewer` plugin straight from this repo: `.claude-plugin/` and `.codex-plugin/` describe it, and the two `marketplace.json` files list it. An install copies the repo as it is in git, so `skills/mizcode-reviewer/scripts/lib/` is committed.
 
-The skill is built from `skills/mizcode-reviewer/`, `packages/review/` and `packages/server/`. When a PR that changes any of them merges, refresh the copy in the same task:
+When a change touches `packages/review/` or `packages/server/` code the skill uses, run `npm run build` and commit the rebuilt `skills/mizcode-reviewer/scripts/lib/` in the same PR.
 
-1. Check out `main` at the merge commit and run `npm ci && npm run build`.
-2. Replace aiman's `skills/mizcode-reviewer/` with this repo's `skills/mizcode-reviewer/`, including the built `scripts/lib/`.
-3. In aiman, run `npm run check`.
-4. Commit to aiman `main` as `chore(mizcode-reviewer): refresh from mizcode-reviewer <short sha>` and push.
-5. Tell the owner to run `aiman sync`.
-
-Never edit the copy in aiman directly. Change the skill here, then refresh.
+Codex caches the plugin by the `version` in `.codex-plugin/plugin.json`. Raise it when a change should reach Codex users.

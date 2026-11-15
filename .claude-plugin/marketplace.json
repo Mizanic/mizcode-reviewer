@@ -1,0 +1,14 @@
+{
+  "name": "mizcode-reviewer",
+  "owner": {
+    "name": "Mizanic"
+  },
+  "description": "Post your AI tool's pull request reviews as mizcode-reviewer[bot] instead of under your own GitHub account.",
+  "plugins": [
+    {
+      "name": "mizcode-reviewer",
+      "source": "./",
+      "description": "Post your AI tool's pull request reviews as mizcode-reviewer[bot] instead of under your own GitHub account."
+    }
+  ]
+}
