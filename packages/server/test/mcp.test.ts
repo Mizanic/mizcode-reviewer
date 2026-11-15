@@ -333,6 +333,16 @@ describe("submit_review MCP server", () => {
     expect(await response.json()).toEqual({ jsonrpc: "2.0", error: { code: -32700, message: "Parse error" }, id: null });
   });
 
+  it.each(["GET", "DELETE"])("answers %s with 405, so the client stops asking for a stream", async (method) => {
+    const response = await handleMcpRequest(
+      new Request("http://mcp.test/mcp", { method, headers: { accept: "text/event-stream" } }),
+      config(),
+    );
+
+    expect(response.status).toBe(405);
+    expect(response.headers.get("allow")).toBe("POST");
+  });
+
   it("logs the user, the pull request and the outcome of each call, and never the token", async () => {
     const lines: string[] = [];
     const posting = mockGitHub([installation, token, canWrite, pull, app, noReviews, posted]);
