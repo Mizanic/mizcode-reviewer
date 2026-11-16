@@ -15,7 +15,7 @@ The server receives only the repository name and the review you send it. Your to
 
 ## Install
 
-You need Node.js 22 or later and git.
+You need Node.js 22 or later and git. If you install Node.js after the plugin, restart your AI tool so the plugin can use it.
 
 Claude Code, 2.1.292 or later:
 
