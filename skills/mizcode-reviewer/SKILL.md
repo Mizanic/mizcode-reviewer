@@ -47,7 +47,14 @@ never as the user.
 
 ## 1. Gather the review
 
-Run, from a clone of the repository when there is one:
+First run `node --version`. If the command is not found, or the major version
+is below 22, stop before gather. Tell the user to install Node.js 22 or later
+from https://nodejs.org/en/download, then restart Claude Code or Codex so the
+plugin can use it. Do not look for another Node.js on the machine: the plugin
+uses the same `node` to send the user's sign-in to the server, so the review
+could not be posted.
+
+Then run, from a clone of the repository when there is one:
 
 ```bash
 node <skill>/scripts/review.js gather <pr> [--repo owner/name]
