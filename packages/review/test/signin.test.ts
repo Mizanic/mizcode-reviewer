@@ -318,6 +318,95 @@ describe("review.js token", () => {
     await expect(userToken(options)).resolves.toBe("ghu_other");
   });
 
+  it("leaves a lock another process took after this one's lock was removed as stale", async () => {
+    const { github, options, dir } = setup([refreshed]);
+    saved(dir, expired);
+    const fetchFirst = options.fetch!;
+    options.fetch = async (url, init) => {
+      // This refresh took so long that another process removed the lock as stale and took its own.
+      rmSync(lockFile(dir));
+      writeFileSync(lockFile(dir), "other");
+      return fetchFirst(url, init);
+    };
+
+    await run(["token"], options);
+
+    expect(github.calls).toHaveLength(1);
+    expect(readFileSync(lockFile(dir), "utf8")).toBe("other");
+  });
+
+  it("does not remove a stale lock while another process holds the guard for removing it", async () => {
+    const { github, options, dir, sleeps } = setup([refreshed]);
+    saved(dir, expired);
+    writeFileSync(lockFile(dir), "");
+    const old = new Date(Date.now() - 60 * 1000);
+    utimesSync(lockFile(dir), old, old);
+    writeFileSync(`${lockFile(dir)}.reclaim`, "");
+    const sleepFirst = options.sleep;
+    options.sleep = async (ms: number) => {
+      await sleepFirst(ms);
+      // The guard's holder removes the stale lock and releases the guard.
+      rmSync(lockFile(dir), { force: true });
+      rmSync(`${lockFile(dir)}.reclaim`, { force: true });
+    };
+
+    const result = await run(["token"], options);
+
+    expect(JSON.parse(result.stdout)).toEqual({ Authorization: "Bearer ghu_second" });
+    expect(github.calls).toHaveLength(1);
+    expect(sleeps).toEqual([100]);
+    expect(existsSync(lockFile(dir))).toBe(false);
+  });
+
+  it("removes a guard left by a process that died while removing a stale lock", async () => {
+    const { github, options, dir } = setup([refreshed]);
+    saved(dir, expired);
+    const old = new Date(Date.now() - 60 * 1000);
+    for (const file of [lockFile(dir), `${lockFile(dir)}.reclaim`]) {
+      writeFileSync(file, "");
+      utimesSync(file, old, old);
+    }
+
+    const result = await run(["token"], options);
+
+    expect(JSON.parse(result.stdout)).toEqual({ Authorization: "Bearer ghu_second" });
+    expect(github.calls).toHaveLength(1);
+    expect(existsSync(lockFile(dir))).toBe(false);
+    expect(existsSync(`${lockFile(dir)}.reclaim`)).toBe(false);
+  });
+
+  // Real clock and real sleeps: the processes overlap only if time passes.
+  it.each([
+    ["no lock", false],
+    ["a lock left by a process that died", true],
+  ])("refreshes once when eight processes find the token expired at the same moment, with %s", async (_name, stale) => {
+    const dir = home({});
+    saved(dir, { access_token: "ghu_first", expires_at: Date.now() - 1, refresh_token: "ghr_first" });
+    if (stale) {
+      writeFileSync(lockFile(dir), "");
+      const old = new Date(Date.now() - 60 * 1000);
+      utimesSync(lockFile(dir), old, old);
+    }
+    let refreshes = 0;
+    const options = {
+      home: dir,
+      fetch: async () => {
+        refreshes += 1;
+        await new Promise((done) => setTimeout(done, 50));
+        return new Response(
+          JSON.stringify(refreshes === 1 ? refreshed.body : { error: "bad_refresh_token" }),
+          { status: 200 },
+        );
+      },
+    };
+
+    const tokens = await Promise.all(Array.from({ length: 8 }, () => userToken(options)));
+
+    expect(tokens).toEqual(Array(8).fill("ghu_second"));
+    expect(refreshes).toBe(1);
+    expect(existsSync(lockFile(dir))).toBe(false);
+  });
+
   it("does not take the lock when the refresh token has expired", async () => {
     const { github, options, dir, sleeps } = setup([]);
     saved(dir, { ...expired, refresh_token_expires_at: T0 - 1 });

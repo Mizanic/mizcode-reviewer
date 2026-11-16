@@ -197,36 +197,71 @@ export async function login(argv, options) {
 function usable(saved, at) {
     return saved.expires_at === undefined || saved.expires_at - REFRESH_MARGIN_MS > at;
 }
+// Creates the lock file at path. Returns its inode, or null if it exists.
+async function tryLock(path) {
+    try {
+        const file = await open(path, "wx", 0o600);
+        const { ino } = await file.stat();
+        await file.close();
+        return ino;
+    }
+    catch (error) {
+        if (error.code === "EEXIST")
+            return null;
+        throw error;
+    }
+}
+function isStale(lock) {
+    return Date.now() - lock.mtimeMs > LOCK_STALE_MS;
+}
+// Removes the refresh lock if a process that died left it. One process at a
+// time does this, holding a second lock: otherwise two processes can both see
+// the old lock, and the second removes the new lock the first just took.
+// Returns true if this process removed it.
+async function removeStaleLock(path) {
+    const guard = `${path}.reclaim`;
+    if ((await tryLock(guard)) === null) {
+        // A guard this old was left by a process that died while removing a lock.
+        const old = await stat(guard).catch(() => null);
+        if (old && isStale(old))
+            await rm(guard, { force: true });
+        return false;
+    }
+    try {
+        const lock = await stat(path).catch(() => null);
+        if (!lock || !isStale(lock))
+            return false;
+        await rm(path, { force: true });
+        return true;
+    }
+    finally {
+        await rm(guard, { force: true });
+    }
+}
 // Runs refresh while holding the refresh lock. Gather and the MCP client's
 // headers helper can both find the token expired at the same moment: without
 // the lock, GitHub refuses the second refresh and that process has no token.
 async function withRefreshLock(options, refresh) {
     const path = lockPath(options);
     const giveUpAt = now(options) + LOCK_WAIT_MS;
-    let held = false;
-    while (!held) {
-        try {
-            await (await open(path, "wx", 0o600)).close();
-            held = true;
-        }
-        catch (error) {
-            if (error.code !== "EEXIST")
-                throw error;
-            const lock = await stat(path).catch(() => null);
-            if (lock && Date.now() - lock.mtimeMs > LOCK_STALE_MS) {
-                await rm(path, { force: true });
-                continue;
-            }
-            if (now(options) >= giveUpAt)
-                break;
-            await sleep(options, LOCK_POLL_MS);
-        }
+    let held = null;
+    while (held === null) {
+        held = await tryLock(path);
+        if (held !== null)
+            break;
+        const lock = await stat(path).catch(() => null);
+        if (lock && isStale(lock) && (await removeStaleLock(path)))
+            continue;
+        if (now(options) >= giveUpAt)
+            break;
+        await sleep(options, LOCK_POLL_MS);
     }
     try {
         return await refresh();
     }
     finally {
-        if (held)
+        // Remove the lock only if it is still the one this process made.
+        if (held !== null && (await stat(path).catch(() => null))?.ino === held)
             await rm(path, { force: true });
     }
 }
