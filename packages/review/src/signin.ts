@@ -7,7 +7,7 @@
 // has expired. The token stays on this machine. The server only asks GitHub
 // whether the token is the App's and whose it is.
 
-import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, open, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
@@ -23,6 +23,13 @@ const DEVICE_GRANT = "urn:ietf:params:oauth:grant-type:device_code";
 // Refresh this long before the token expires, so a call never starts with a
 // token that runs out on the way.
 const REFRESH_MARGIN_MS = 5 * 60 * 1000;
+
+// GitHub accepts a refresh token once, so only one process refreshes at a
+// time. A lock older than LOCK_STALE_MS was left by a process that died. A
+// process waits at most LOCK_WAIT_MS for the lock, then refreshes anyway.
+const LOCK_STALE_MS = 30 * 1000;
+const LOCK_WAIT_MS = 15 * 1000;
+const LOCK_POLL_MS = 100;
 
 // How long one login --wait call waits before it reports "waiting". It stays
 // under the two minutes an AI tool's shell command gets by default.
@@ -85,6 +92,10 @@ function tokenPath(options: RunOptions): string {
 // The device code from the last review.js login, kept until --wait ends.
 function pendingPath(options: RunOptions): string {
   return join(configDir(options.home ?? homedir()), "login.json");
+}
+
+function lockPath(options: RunOptions): string {
+  return join(configDir(options.home ?? homedir()), "refresh.lock");
 }
 
 interface PendingLogin {
@@ -228,23 +239,63 @@ export async function login(argv: string[], options: RunOptions): Promise<string
   return flags.wait ? waitForLogin(options) : startLogin(options);
 }
 
+function usable(saved: SavedToken, at: number): boolean {
+  return saved.expires_at === undefined || saved.expires_at - REFRESH_MARGIN_MS > at;
+}
+
+// Runs refresh while holding the refresh lock. Gather and the MCP client's
+// headers helper can both find the token expired at the same moment: without
+// the lock, GitHub refuses the second refresh and that process has no token.
+async function withRefreshLock<T>(options: RunOptions, refresh: () => Promise<T>): Promise<T> {
+  const path = lockPath(options);
+  const giveUpAt = now(options) + LOCK_WAIT_MS;
+  let held = false;
+  while (!held) {
+    try {
+      await (await open(path, "wx", 0o600)).close();
+      held = true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      const lock = await stat(path).catch(() => null);
+      if (lock && Date.now() - lock.mtimeMs > LOCK_STALE_MS) {
+        await rm(path, { force: true });
+        continue;
+      }
+      if (now(options) >= giveUpAt) break;
+      await sleep(options, LOCK_POLL_MS);
+    }
+  }
+  try {
+    return await refresh();
+  } finally {
+    if (held) await rm(path, { force: true });
+  }
+}
+
 // Returns a usable access token, refreshing it if it has expired, or null.
 async function currentToken(options: RunOptions): Promise<string | null> {
-  const saved = await load(options);
-  if (!saved) return null;
-  const at = now(options);
-  if (saved.expires_at === undefined || saved.expires_at - REFRESH_MARGIN_MS > at) return saved.access_token;
-  if (!saved.refresh_token || (saved.refresh_token_expires_at ?? Infinity) <= at) return null;
+  const first = await load(options);
+  if (!first) return null;
+  if (usable(first, now(options))) return first.access_token;
+  if (!first.refresh_token || (first.refresh_token_expires_at ?? Infinity) <= now(options)) return null;
+  return withRefreshLock(options, async () => {
+    // Another process may have refreshed while this one waited for the lock.
+    const saved = await load(options);
+    if (!saved) return null;
+    const at = now(options);
+    if (usable(saved, at)) return saved.access_token;
+    if (!saved.refresh_token || (saved.refresh_token_expires_at ?? Infinity) <= at) return null;
 
-  // A device flow token refreshes without the client secret.
-  const response = await postForm(options, "/login/oauth/access_token", {
-    client_id: CLIENT_ID,
-    grant_type: "refresh_token",
-    refresh_token: saved.refresh_token,
+    // A device flow token refreshes without the client secret.
+    const response = await postForm(options, "/login/oauth/access_token", {
+      client_id: CLIENT_ID,
+      grant_type: "refresh_token",
+      refresh_token: saved.refresh_token,
+    });
+    if (!response.access_token) return null;
+    await save(options, toSaved(response, at));
+    return response.access_token;
   });
-  if (!response.access_token) return null;
-  await save(options, toSaved(response, at));
-  return response.access_token;
 }
 
 // The signed-in user's token, for reading the pull request.

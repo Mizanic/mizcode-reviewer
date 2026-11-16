@@ -1,7 +1,7 @@
-import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { CLIENT_ID } from "../src/signin.js";
+import { CLIENT_ID, userToken } from "../src/signin.js";
 import { home, mockGitHub, run } from "./helpers.js";
 
 const T0 = 1_800_000_000_000;
@@ -218,6 +218,116 @@ describe("review.js token", () => {
       body: { client_id: CLIENT_ID, grant_type: "refresh_token", refresh_token: "ghr_first" },
     });
     expect(JSON.parse(readFileSync(tokenFile(dir), "utf8")).refresh_token).toBe("ghr_second");
+  });
+
+  function lockFile(dir: string): string {
+    return join(dir, ".config", "mizcode-reviewer", "refresh.lock");
+  }
+  const expired = { access_token: "ghu_first", expires_at: T0 - 1, refresh_token: "ghr_first" };
+  const refreshed = { status: 200, body: { ...granted.body, access_token: "ghu_second", refresh_token: "ghr_second" } };
+
+  it("waits while another process refreshes, then uses the token it saved without refreshing again", async () => {
+    const { github, options, dir, sleeps } = setup([]);
+    saved(dir, expired);
+    writeFileSync(lockFile(dir), "");
+    const sleepFirst = options.sleep;
+    options.sleep = async (ms: number) => {
+      await sleepFirst(ms);
+      // The other process saves its new token and releases the lock.
+      saved(dir, { access_token: "ghu_other", expires_at: T0 + 8 * HOUR, refresh_token: "ghr_other" });
+      rmSync(lockFile(dir));
+    };
+
+    const result = await run(["token"], options);
+
+    expect(JSON.parse(result.stdout)).toEqual({ Authorization: "Bearer ghu_other" });
+    expect(github.calls).toHaveLength(0);
+    expect(sleeps).toEqual([100]);
+  });
+
+  it("takes the lock, refreshes, and releases the lock", async () => {
+    const { github, options, dir } = setup([refreshed]);
+    saved(dir, expired);
+    let lockedDuringRefresh = false;
+    const fetchFirst = options.fetch!;
+    options.fetch = async (url, init) => {
+      lockedDuringRefresh = existsSync(lockFile(dir));
+      return fetchFirst(url, init);
+    };
+
+    const result = await run(["token"], options);
+
+    expect(JSON.parse(result.stdout)).toEqual({ Authorization: "Bearer ghu_second" });
+    expect(github.calls).toHaveLength(1);
+    expect(lockedDuringRefresh).toBe(true);
+    expect(existsSync(lockFile(dir))).toBe(false);
+  });
+
+  it.each([
+    ["GitHub refuses the refresh", [{ status: 200, body: { error: "bad_refresh_token" } }]],
+    ["GitHub cannot be reached", []],
+  ])("releases the lock when %s", async (_name, responses) => {
+    const { options, dir } = setup(responses as Array<{ status: number; body: unknown }>);
+    saved(dir, expired);
+
+    const result = await run(["token"], options);
+
+    expect(result.stdout).toBe("{}\n");
+    expect(existsSync(lockFile(dir))).toBe(false);
+  });
+
+  it("removes a lock left by a process that died, and refreshes", async () => {
+    const { github, options, dir, sleeps } = setup([refreshed]);
+    saved(dir, expired);
+    writeFileSync(lockFile(dir), "");
+    const old = new Date(Date.now() - 60 * 1000);
+    utimesSync(lockFile(dir), old, old);
+
+    const result = await run(["token"], options);
+
+    expect(JSON.parse(result.stdout)).toEqual({ Authorization: "Bearer ghu_second" });
+    expect(github.calls).toHaveLength(1);
+    expect(sleeps).toEqual([]);
+    expect(existsSync(lockFile(dir))).toBe(false);
+  });
+
+  it("refreshes anyway after waiting 15 seconds for a lock that is not released, and leaves that lock", async () => {
+    const { github, options, dir, sleeps } = setup([refreshed]);
+    saved(dir, expired);
+    writeFileSync(lockFile(dir), "");
+
+    const result = await run(["token"], options);
+
+    expect(JSON.parse(result.stdout)).toEqual({ Authorization: "Bearer ghu_second" });
+    expect(github.calls).toHaveLength(1);
+    expect(sleeps.reduce((a, b) => a + b, 0)).toBe(15 * 1000);
+    expect(existsSync(lockFile(dir))).toBe(true);
+  });
+
+  it("gather waits for the lock too", async () => {
+    const { options, dir } = setup([]);
+    saved(dir, expired);
+    writeFileSync(lockFile(dir), "");
+    const sleepFirst = options.sleep;
+    options.sleep = async (ms: number) => {
+      await sleepFirst(ms);
+      saved(dir, { access_token: "ghu_other", expires_at: T0 + 8 * HOUR, refresh_token: "ghr_other" });
+      rmSync(lockFile(dir));
+    };
+
+    await expect(userToken(options)).resolves.toBe("ghu_other");
+  });
+
+  it("does not take the lock when the refresh token has expired", async () => {
+    const { github, options, dir, sleeps } = setup([]);
+    saved(dir, { ...expired, refresh_token_expires_at: T0 - 1 });
+    writeFileSync(lockFile(dir), "");
+
+    const result = await run(["token"], options);
+
+    expect(result.stdout).toBe("{}\n");
+    expect(github.calls).toHaveLength(0);
+    expect(sleeps).toEqual([]);
   });
 
   it.each([

@@ -1,6 +1,6 @@
 {
   "name": "mizcode-reviewer",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Post your AI tool's pull request reviews as mizcode-reviewer[bot] instead of under your own GitHub account.",
   "author": {
     "name": "Mizanic"
