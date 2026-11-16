@@ -34,6 +34,8 @@ The plugin adds the review skill and the connection to the server. Start a new s
 
 Then install the bot on the repositories you want reviewed: https://github.com/apps/mizcode-reviewer/installations/new
 
+In an organization, a repository admin can install the bot on the repositories they administer, unless the organization allows only owners to install apps. Other members see Request instead of Install: GitHub emails the organization's owners, and reviews post once an owner installs it. Until then the skill stops before reviewing and shows the install link.
+
 ## Use
 
 Ask your AI tool to review a pull request, for example `/mizcode-reviewer 42`.
