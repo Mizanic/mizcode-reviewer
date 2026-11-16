@@ -170,6 +170,7 @@ describe("postReviewAsApp", () => {
 
     expect(error.code).toBe("not_installed");
     expect(error.message).toContain("acme/widgets");
+    expect(error.message).toContain("https://github.com/apps/mizcode-reviewer/installations/new");
     expect(calls).toHaveLength(1);
   });
 

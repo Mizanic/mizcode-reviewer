@@ -1,5 +1,7 @@
-// The plan B MCP server: one tool, submit_review, that posts a review as the
-// App for a user who can write to the repo. handleMcpRequest takes a web standard Request and returns a Response, so
+// The plan B MCP server. submit_review posts a review as the App for a user
+// who can write to the repo. check_repo runs the same install and permission
+// checks and posts nothing, so the skill can stop before it reviews a pull
+// request the bot can't post on. handleMcpRequest takes a web standard Request and returns a Response, so
 // the local server and the Lambda adapter share it. It runs stateless: each
 // request gets its own MCP server and transport, and nothing is kept between
 // requests.
@@ -10,6 +12,7 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import {
   GitHubClientError,
+  checkRepoAccess,
   checkUserToken,
   postReviewAsApp,
   type ClientOptions,
@@ -43,11 +46,15 @@ const comment = z
     message: "start_side needs start_line",
   });
 
+const repoField = z
+  .string()
+  .regex(/^[A-Za-z0-9-]+\/[A-Za-z0-9._-]+$/, "repo must be owner/name")
+  .describe("The repository, as owner/name");
+
+const checkRepoInput = z.strictObject({ repo: repoField });
+
 const submitReviewInput = z.strictObject({
-  repo: z
-    .string()
-    .regex(/^[A-Za-z0-9-]+\/[A-Za-z0-9._-]+$/, "repo must be owner/name")
-    .describe("The repository, as owner/name"),
+  repo: repoField,
   pull_number: z.int().positive().describe("The pull request number"),
   commit_sha: z
     .string()
@@ -64,6 +71,10 @@ const DESCRIPTION = `Post a pull request review as mizcode-reviewer[bot]. The re
 Posts nothing if the pull request head is no longer commit_sha. If the bot already posted the same review at commit_sha, posts nothing and returns that review.
 
 Success returns {"review_id", "html_url"}. An error returns {"error", "message"} with error one of not_installed, no_access, head_moved (with current_head) or github_error (with GitHub's status).`;
+
+const CHECK_DESCRIPTION = `Check that mizcode-reviewer[bot] can post a review on the repository for the signed-in user: the bot is installed there and the user can write to it. Call it before reviewing. Posts nothing.
+
+Success returns {"ok": true}. An error returns {"error", "message"} with error one of not_installed (the message has the install link), no_access or github_error (with GitHub's status).`;
 
 function result(value: Record<string, unknown>, isError = false): CallToolResult {
   return { content: [{ type: "text", text: JSON.stringify(value) }], isError };
@@ -87,6 +98,12 @@ function errorResult(error: unknown): CallToolResult {
   }, true);
 }
 
+function errorCode(failed: CallToolResult): string {
+  return (JSON.parse((failed.content[0] as { text: string }).text) as { error: string }).error;
+}
+
+const unauthorized = () => result({ error: "unauthorized", message: "Missing or invalid access token." }, true);
+
 // Copies the known fields only, so nothing else in the input reaches GitHub.
 function toComment(input: SubmitReviewInput["comments"][number]): ReviewComment {
   const out: ReviewComment = { path: input.path, line: input.line, side: input.side, body: input.body };
@@ -100,10 +117,27 @@ function toComment(input: SubmitReviewInput["comments"][number]): ReviewComment 
 export function createMcpServer(config: McpConfig, login: string | null): McpServer {
   const server = new McpServer({ name: "mizcode-reviewer", version: "0.0.0" });
   server.registerTool(
+    "check_repo",
+    { title: "Check repository", description: CHECK_DESCRIPTION, inputSchema: checkRepoInput },
+    async (input) => {
+      if (login === null) return unauthorized();
+      const [owner, name] = input.repo.split("/") as [string, string];
+      try {
+        await checkRepoAccess(config.appId, config.privateKey, { owner, name }, login, config.github);
+        config.log?.(`check_repo ${login} ${input.repo} ok`);
+        return result({ ok: true });
+      } catch (error) {
+        const failed = errorResult(error);
+        config.log?.(`check_repo ${login} ${input.repo} ${errorCode(failed)}`);
+        return failed;
+      }
+    },
+  );
+  server.registerTool(
     "submit_review",
     { title: "Submit review", description: DESCRIPTION, inputSchema: submitReviewInput },
     async (input) => {
-      if (login === null) return result({ error: "unauthorized", message: "Missing or invalid access token." }, true);
+      if (login === null) return unauthorized();
       const [owner, name] = input.repo.split("/") as [string, string];
       const where = `${input.repo}#${input.pull_number}`;
       try {
@@ -123,8 +157,7 @@ export function createMcpServer(config: McpConfig, login: string | null): McpSer
         return result({ ...posted });
       } catch (error) {
         const failed = errorResult(error);
-        const code = (JSON.parse((failed.content[0] as { text: string }).text) as { error: string }).error;
-        config.log?.(`submit_review ${login} ${where} ${code}`);
+        config.log?.(`submit_review ${login} ${where} ${errorCode(failed)}`);
         return failed;
       }
     },
@@ -154,8 +187,8 @@ function callsTool(body: unknown): boolean {
   );
 }
 
-// Connecting and listing the tool need no token, so an AI tool that starts
-// before the user signs in still shows submit_review. Calling it needs one.
+// Connecting and listing the tools need no token, so an AI tool that starts
+// before the user signs in still shows them. Calling either needs one.
 // A missing or bad token gets 403, not 401: on a 401 an MCP client starts
 // its own OAuth sign-in against this server, which has none. On a 403
 // Claude Code and Codex run their headers helper again and retry the call

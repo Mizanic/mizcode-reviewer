@@ -28,7 +28,7 @@ Any other field is `bad_input`.
 Every command prints its result to stdout and exits 0. On failure it prints one JSON object to stderr and nothing to stdout, and `post` posts nothing:
 
 ```json
-{ "error": "not_installed", "message": "The App is not installed on acme/widgets. Install it on that repository and try again." }
+{ "error": "not_installed", "message": "mizcode-reviewer[bot] is not installed on acme/widgets. Install it on that repository, then try again: https://github.com/apps/mizcode-reviewer/installations/new" }
 ```
 
 The message says what to do next.

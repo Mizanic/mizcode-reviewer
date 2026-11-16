@@ -30,9 +30,10 @@ Use this skill's `scripts/review.js` for GitHub PR plumbing. Run it as
 `node <skill>/scripts/review.js`, where `<skill>` is this skill's folder. It
 needs Node.js 22 or later and nothing else installed, and it does not use
 `gh`. It reads the pull request as the user, with the token from a one-time
-GitHub sign-in. The review posts through the shared bot's MCP tool
-`submit_review`, from the `mizcode-reviewer` MCP server, as
-`mizcode-reviewer[bot]`, never as the user.
+GitHub sign-in. The `mizcode-reviewer` MCP server has two tools:
+`check_repo` confirms before the review that the bot can post on the
+repository, and `submit_review` posts the review as `mizcode-reviewer[bot]`,
+never as the user.
 
 ## Arguments
 
@@ -85,6 +86,24 @@ report the message: `not_installed` (exit 1) means the pull request was not
 found or mizcode-reviewer[bot] is not installed on the repository, and the
 message has the install link; `bad_input` (exit 2) names the flag or file to
 fix.
+
+Then, before reading anything else, call the MCP tool `check_repo` with
+`{"repo": "<owner/name>"}`, the `repo` from gather's output. It runs the same
+install and permission checks as the post, and posts nothing. On a public
+repository gather succeeds even where the bot is not installed, so this is
+the check that stops a review the bot could never post:
+
+| `check_repo` returns | What to do |
+| --- | --- |
+| `{"ok": true}` | Continue. |
+| `"error": "not_installed"` | Stop before reviewing. Show the user the message: it has the install link. Once they install the bot, start again from gather. |
+| `"error": "no_access"` | Stop before reviewing and report the message: the bot posts only for users who can write to the repository. |
+| `"error": "unauthorized"`, or HTTP 403 | Sign the user in as above, then call `check_repo` again. |
+| `"error": "github_error"` | Stop and report the message and `status`. |
+
+Skip the check for a pre-PR review, which posts nothing. If the tool is not
+available, the `mizcode-reviewer` MCP server is not set up: continue the
+review, and step 8 says what to do.
 
 If there is no open PR, stop unless the user explicitly requested a pre-PR
 review. For a pre-PR review, inspect the merge-base diff locally and do not
