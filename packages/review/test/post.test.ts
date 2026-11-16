@@ -514,7 +514,7 @@ describe("post: errors", () => {
     expect(out.code).toBe(1);
     expect(out.error).toEqual({
       error: "not_installed",
-      message: "The App is not installed on acme/widgets. Install it on that repository and try again.",
+      message: "mizcode-reviewer[bot] is not installed on acme/widgets. Install it on that repository, then try again: https://github.com/apps/mizcode-reviewer/installations/new",
     });
   });
 

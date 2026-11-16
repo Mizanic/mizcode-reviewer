@@ -11,7 +11,7 @@ import { githubUserAuth, handleMcpRequest } from "./mcp.js";
 
 const USAGE = `Usage: MIZCODE_CLIENT_SECRET=<secret> node serve.js --app-id <id> --client-id <id> --key-file <path> [--port <port>]
 
-Runs the submit_review MCP server at http://127.0.0.1:<port>/mcp, default port 8787.
+Runs the mizcode-reviewer MCP server (check_repo and submit_review) at http://127.0.0.1:<port>/mcp, default port 8787.
 MIZCODE_CLIENT_SECRET is the App's client secret, from the App's settings page.
 `;
 

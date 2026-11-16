@@ -61,9 +61,9 @@ async function connect(cfg: McpConfig, authorization = TOKEN): Promise<Client> {
   return client;
 }
 
-async function submit(cfg: McpConfig, args: unknown) {
+async function call(cfg: McpConfig, name: string, args: unknown) {
   const client = await connect(cfg);
-  const response = await client.callTool({ name: "submit_review", arguments: args as Record<string, unknown> });
+  const response = await client.callTool({ name, arguments: args as Record<string, unknown> });
   await client.close();
   const content = response.content as Array<{ type: string; text: string }>;
   const text = content[0]?.text ?? "";
@@ -75,6 +75,9 @@ async function submit(cfg: McpConfig, args: unknown) {
   }
   return { isError: response.isError === true, text, json };
 }
+
+const submit = (cfg: McpConfig, args: unknown) => call(cfg, "submit_review", args);
+const check = (cfg: McpConfig, args: unknown) => call(cfg, "check_repo", args);
 
 const installation = { status: 200, body: { id: 99 } };
 const token = { status: 201, body: { token: "ghs_installation" } };
@@ -88,13 +91,16 @@ const posted = {
 };
 
 describe("submit_review MCP server", () => {
-  it("lists the submit_review tool with its input schema", async () => {
+  it("lists check_repo and submit_review with their input schemas", async () => {
     const client = await connect(config());
     const { tools } = await client.listTools();
     await client.close();
 
-    expect(tools.map((tool) => tool.name)).toEqual(["submit_review"]);
-    const schema = tools[0]?.inputSchema as { required?: string[]; properties?: Record<string, unknown> };
+    expect(tools.map((tool) => tool.name)).toEqual(["check_repo", "submit_review"]);
+    const checkSchema = tools[0]?.inputSchema as { required?: string[]; additionalProperties?: unknown };
+    expect(checkSchema.required).toEqual(["repo"]);
+    expect(checkSchema.additionalProperties).toBe(false);
+    const schema = tools[1]?.inputSchema as { required?: string[]; properties?: Record<string, unknown> };
     expect(schema.required?.sort()).toEqual(["body", "comments", "commit_sha", "pull_number", "repo"]);
     expect(schema.properties).not.toHaveProperty("event");
   });
@@ -189,14 +195,14 @@ describe("submit_review MCP server", () => {
     expect(github.calls).toHaveLength(0);
   });
 
-  it("returns not_installed when the App is not on the repository", async () => {
+  it("returns not_installed with the install link when the App is not on the repository", async () => {
     const github = mockGitHub([{ status: 404, body: { message: "Not Found" } }]);
 
     const response = await submit(config(github.options), input);
 
     expect(response.isError).toBe(true);
     expect(response.json?.error).toBe("not_installed");
-    expect(response.json?.message).toEqual(expect.any(String));
+    expect(response.json?.message).toContain("https://github.com/apps/mizcode-reviewer/installations/new");
   });
 
   it("checks the user's permission on the repo with the App's token", async () => {
@@ -288,7 +294,7 @@ describe("submit_review MCP server", () => {
     const { tools } = await client.listTools();
     await client.close();
 
-    expect(tools.map((tool) => tool.name)).toEqual(["submit_review"]);
+    expect(tools.map((tool) => tool.name)).toEqual(["check_repo", "submit_review"]);
     expect(github.calls).toHaveLength(0);
   });
 
@@ -354,6 +360,107 @@ describe("submit_review MCP server", () => {
       "submit_review ali acme/widgets#7 posted https://github.com/acme/widgets/pull/7#pullrequestreview-123",
       "submit_review ali acme/widgets#7 no_access",
     ]);
+    expect(lines.join("\n")).not.toContain("test-token");
+  });
+});
+
+describe("check_repo", () => {
+  it("returns ok when the App is installed and the user can write, after exactly the post's own checks", async () => {
+    const github = mockGitHub([installation, token, canWrite]);
+
+    const response = await check(config(github.options), { repo: "acme/widgets" });
+
+    expect(response).toMatchObject({ isError: false, json: { ok: true } });
+    expect(github.calls.map((c) => `${c.method} ${c.url}`)).toEqual([
+      "GET https://api.github.com/repos/acme/widgets/installation",
+      "POST https://api.github.com/app/installations/99/access_tokens",
+      "GET https://api.github.com/repos/acme/widgets/collaborators/ali/permission",
+    ]);
+    expect(github.calls[1]?.body).toEqual({ repositories: ["widgets"] });
+  });
+
+  it("returns not_installed with the install link and asks GitHub nothing else", async () => {
+    const github = mockGitHub([{ status: 404, body: { message: "Not Found" } }]);
+
+    const response = await check(config(github.options), { repo: "acme/widgets" });
+
+    expect(response.isError).toBe(true);
+    expect(response.json?.error).toBe("not_installed");
+    expect(response.json?.message).toBe(
+      "mizcode-reviewer[bot] is not installed on acme/widgets. Install it on that repository, then try again: https://github.com/apps/mizcode-reviewer/installations/new",
+    );
+    expect(github.calls).toHaveLength(1);
+  });
+
+  it.each([
+    ["read", { status: 200, body: { permission: "read" } }, "ali has read permission on acme/widgets"],
+    ["a user GitHub does not know", { status: 404, body: { message: "Not Found" } }, "ali has none permission on acme/widgets"],
+  ])("returns no_access for %s", async (_name, permission, message) => {
+    const github = mockGitHub([installation, token, permission]);
+
+    const response = await check(config(github.options), { repo: "acme/widgets" });
+
+    expect(response.isError).toBe(true);
+    expect(response.json?.error).toBe("no_access");
+    expect(String(response.json?.message)).toContain(message);
+  });
+
+  it("returns ok for admin permission", async () => {
+    const github = mockGitHub([installation, token, { status: 200, body: { permission: "admin" } }]);
+
+    const response = await check(config(github.options), { repo: "acme/widgets" });
+
+    expect(response.json).toEqual({ ok: true });
+  });
+
+  it("returns github_error with GitHub's status", async () => {
+    const github = mockGitHub([installation, { status: 500, body: { message: "Server Error" } }]);
+
+    const response = await check(config(github.options), { repo: "acme/widgets" });
+
+    expect(response.isError).toBe(true);
+    expect(response.json).toMatchObject({ error: "github_error", status: 500 });
+  });
+
+  it.each([
+    ["a repo that is not owner/name", { repo: "widgets" }],
+    ["an extra field", { repo: "acme/widgets", pull_number: 7 }],
+  ])("rejects %s without calling GitHub", async (_name, args) => {
+    const github = mockGitHub();
+
+    const response = await check(config(github.options), args);
+
+    expect(response.isError).toBe(true);
+    expect(response.text).toContain("Input validation error");
+    expect(github.calls).toHaveLength(0);
+  });
+
+  it("returns 403 before any MCP handling when the call has no token", async () => {
+    const github = mockGitHub();
+    const response = await handleMcpRequest(
+      new Request("http://mcp.test/mcp", {
+        method: "POST",
+        headers: { "content-type": "application/json", accept: "application/json, text/event-stream" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: { name: "check_repo", arguments: { repo: "acme/widgets" } },
+        }),
+      }),
+      config(github.options),
+    );
+
+    expect(response.status).toBe(403);
+    expect(github.calls).toHaveLength(0);
+  });
+
+  it("logs the user, the repo and the outcome, and never the token", async () => {
+    const lines: string[] = [];
+    await check({ ...config(mockGitHub([installation, token, canWrite]).options), log: (l) => lines.push(l) }, { repo: "acme/widgets" });
+    await check({ ...config(mockGitHub([{ status: 404, body: {} }]).options), log: (l) => lines.push(l) }, { repo: "acme/widgets" });
+
+    expect(lines).toEqual(["check_repo ali acme/widgets ok", "check_repo ali acme/widgets not_installed"]);
     expect(lines.join("\n")).not.toContain("test-token");
   });
 });

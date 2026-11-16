@@ -5,12 +5,13 @@ mizcode-reviewer lets your AI coding tool, Claude Code or Codex, post its pull r
 ## How it works
 
 1. Your AI tool runs the `mizcode-reviewer` skill. The skill's script, `review.js gather`, reads the pull request with your own GitHub sign-in and stages it in a temporary directory.
-2. Your AI tool writes the review on your machine, with your own AI subscription.
-3. The skill sends the review to the mizcode-reviewer server through its MCP tool, `submit_review`, with your GitHub sign-in token.
-4. The server asks GitHub whose token it is, and checks that you can write to the repository.
-5. If the pull request has new commits since the review was written, it posts nothing. Otherwise it posts the review as a comment review from `mizcode-reviewer[bot]`.
+2. The skill asks the mizcode-reviewer server, through its MCP tool `check_repo`, whether `mizcode-reviewer[bot]` is installed on the repository and you can write to it. If not, the skill stops before reviewing and shows the install link or the reason.
+3. Your AI tool writes the review on your machine, with your own AI subscription.
+4. The skill sends the review to the server through its MCP tool, `submit_review`, with your GitHub sign-in token.
+5. The server asks GitHub whose token it is, and checks again that the bot is installed and you can write to the repository.
+6. If the pull request has new commits since the review was written, it posts nothing. Otherwise it posts the review as a comment review from `mizcode-reviewer[bot]`.
 
-The server receives only the review you send it. Your token stays on your machine.
+The server receives only the repository name and the review you send it. Your token stays on your machine.
 
 ## Install
 

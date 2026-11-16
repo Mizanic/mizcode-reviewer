@@ -132,6 +132,8 @@ function repoPath(repo: Repo): string {
   return `/repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.name)}`;
 }
 
+export const INSTALL_URL = "https://github.com/apps/mizcode-reviewer/installations/new";
+
 export async function getInstallationId(
   repo: Repo,
   appJwt: string,
@@ -141,7 +143,7 @@ export async function getInstallationId(
   if (response.status === 404) {
     throw new GitHubClientError(
       "not_installed",
-      `The App is not installed on ${repo.owner}/${repo.name}. Install it on that repository and try again.`,
+      `mizcode-reviewer[bot] is not installed on ${repo.owner}/${repo.name}. Install it on that repository, then try again: ${INSTALL_URL}`,
     );
   }
   const installation = await json<{ id: number }>(response);
@@ -581,6 +583,20 @@ export async function findPostedReview(
     if (sameComments(review.comments, own)) return candidate;
   }
   return null;
+}
+
+// The two checks a post makes before it reads the pull request: the App is
+// installed on the repo, and the user can write to it. Throws not_installed
+// or no_access. Posts nothing.
+export async function checkRepoAccess(
+  appId: string,
+  privateKey: string,
+  repo: Repo,
+  login: string,
+  options: ClientOptions = {},
+): Promise<void> {
+  const token = await createRepoToken(appId, privateKey, repo, options);
+  await assertCanWrite(repo, login, token, options);
 }
 
 export interface PostReviewAsAppInput {

@@ -66,7 +66,7 @@ describe("Lambda handler", () => {
     expect(result.multiValueHeaders["content-type"]?.[0]).toContain("application/json");
     const body = JSON.parse(result.body) as { id: number; result: { tools: Array<{ name: string }> } };
     expect(body.id).toBe(1);
-    expect(body.result.tools.map((tool) => tool.name)).toEqual(["submit_review"]);
+    expect(body.result.tools.map((tool) => tool.name)).toEqual(["check_repo", "submit_review"]);
   });
 
   it("answers initialize", async () => {
@@ -88,7 +88,7 @@ describe("Lambda handler", () => {
     const result = await handler({ ...plain, body: Buffer.from(plain.body as string).toString("base64"), isBase64Encoded: true });
 
     expect(result.statusCode).toBe(200);
-    expect(JSON.parse(result.body).result.tools).toHaveLength(1);
+    expect(JSON.parse(result.body).result.tools.map((tool: { name: string }) => tool.name)).toEqual(["check_repo", "submit_review"]);
   });
 
   it("reads the single-value headers when the event has no multiValueHeaders", async () => {
