@@ -40,7 +40,20 @@ Ask your AI tool to review a pull request, for example `/mizcode-reviewer 42`.
 
 The first time, the skill shows a code. Open https://github.com/login/device on any device and enter it. The sign-in is saved in `~/.config/mizcode-reviewer/token.json` on your machine, and later reviews skip this step.
 
-To update, run `claude plugin update mizcode-reviewer@mizcode-reviewer` in Claude Code, or `codex plugin marketplace upgrade mizcode-reviewer` in Codex.
+To update in Claude Code, refresh the marketplace first. `claude plugin update` alone reports the installed version as the latest:
+
+```sh
+claude plugin marketplace update mizcode-reviewer
+claude plugin update mizcode-reviewer@mizcode-reviewer
+```
+
+To update in Codex:
+
+```sh
+codex plugin marketplace upgrade mizcode-reviewer
+```
+
+Then start a new session.
 
 ## The review skill
 
