@@ -6,6 +6,7 @@
 // Authorization header for the MCP server, refreshing the token first if it
 // has expired. The token stays on this machine. The server only asks GitHub
 // whether the token is the App's and whose it is.
+import { randomUUID } from "node:crypto";
 import { chmod, mkdir, open, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -197,13 +198,21 @@ export async function login(argv, options) {
 function usable(saved, at) {
     return saved.expires_at === undefined || saved.expires_at - REFRESH_MARGIN_MS > at;
 }
-// Creates the lock file at path. Returns its inode, or null if it exists.
+// Creates the lock file at path with a new random ID in it. Returns the ID,
+// or null if the file exists. The ID, not the inode, tells a process whether
+// the lock is still its own: a file system can give a new file the inode of
+// one just removed.
 async function tryLock(path) {
+    const id = randomUUID();
     try {
         const file = await open(path, "wx", 0o600);
-        const { ino } = await file.stat();
-        await file.close();
-        return ino;
+        try {
+            await file.writeFile(id);
+        }
+        finally {
+            await file.close();
+        }
+        return id;
     }
     catch (error) {
         if (error.code === "EEXIST")
@@ -261,7 +270,7 @@ async function withRefreshLock(options, refresh) {
     }
     finally {
         // Remove the lock only if it is still the one this process made.
-        if (held !== null && (await stat(path).catch(() => null))?.ino === held)
+        if (held !== null && (await readFile(path, "utf8").catch(() => null)) === held)
             await rm(path, { force: true });
     }
 }

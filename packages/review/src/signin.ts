@@ -7,6 +7,7 @@
 // has expired. The token stays on this machine. The server only asks GitHub
 // whether the token is the App's and whose it is.
 
+import { randomUUID } from "node:crypto";
 import { chmod, mkdir, open, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -243,13 +244,20 @@ function usable(saved: SavedToken, at: number): boolean {
   return saved.expires_at === undefined || saved.expires_at - REFRESH_MARGIN_MS > at;
 }
 
-// Creates the lock file at path. Returns its inode, or null if it exists.
-async function tryLock(path: string): Promise<number | null> {
+// Creates the lock file at path with a new random ID in it. Returns the ID,
+// or null if the file exists. The ID, not the inode, tells a process whether
+// the lock is still its own: a file system can give a new file the inode of
+// one just removed.
+async function tryLock(path: string): Promise<string | null> {
+  const id = randomUUID();
   try {
     const file = await open(path, "wx", 0o600);
-    const { ino } = await file.stat();
-    await file.close();
-    return ino;
+    try {
+      await file.writeFile(id);
+    } finally {
+      await file.close();
+    }
+    return id;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "EEXIST") return null;
     throw error;
@@ -288,7 +296,7 @@ async function removeStaleLock(path: string): Promise<boolean> {
 async function withRefreshLock<T>(options: RunOptions, refresh: () => Promise<T>): Promise<T> {
   const path = lockPath(options);
   const giveUpAt = now(options) + LOCK_WAIT_MS;
-  let held: number | null = null;
+  let held: string | null = null;
   while (held === null) {
     held = await tryLock(path);
     if (held !== null) break;
@@ -301,7 +309,7 @@ async function withRefreshLock<T>(options: RunOptions, refresh: () => Promise<T>
     return await refresh();
   } finally {
     // Remove the lock only if it is still the one this process made.
-    if (held !== null && (await stat(path).catch(() => null))?.ino === held) await rm(path, { force: true });
+    if (held !== null && (await readFile(path, "utf8").catch(() => null)) === held) await rm(path, { force: true });
   }
 }
 
