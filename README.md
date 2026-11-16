@@ -55,6 +55,29 @@ codex plugin marketplace upgrade mizcode-reviewer
 
 Then start a new session.
 
+## Uninstall
+
+Claude Code:
+
+```sh
+claude plugin uninstall mizcode-reviewer@mizcode-reviewer
+claude plugin marketplace remove mizcode-reviewer
+```
+
+Codex:
+
+```sh
+codex plugin remove mizcode-reviewer@mizcode-reviewer
+codex plugin marketplace remove mizcode-reviewer
+```
+
+The plugin's sign-in stays on your machine and on GitHub until you remove it:
+
+1. Delete `~/.config/mizcode-reviewer/token.json`.
+2. On GitHub, open Settings, then Applications, then the Authorized GitHub Apps tab, and revoke mizcode-reviewer. This ends every token issued to it for you.
+
+The bot stays installed on your repositories. To remove it, uninstall it under Settings, then Applications, then Installed GitHub Apps, or in the organization's Settings under GitHub Apps. Other people on the repository who use mizcode-reviewer lose the bot too.
+
 ## The review skill
 
 `skills/mizcode-reviewer/` holds the review method, [SKILL.md](skills/mizcode-reviewer/SKILL.md), and the script it runs:
