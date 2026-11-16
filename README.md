@@ -42,6 +42,8 @@ Ask your AI tool to review a pull request, for example `/mizcode-reviewer 42`.
 
 The first time, the skill shows a code. Open https://github.com/login/device on any device and enter it. The sign-in is saved in `~/.config/mizcode-reviewer/token.json` on your machine, and later reviews skip this step.
 
+Unattended runs, such as `claude -p` or `codex exec`, work on a machine where you have signed in. Sign in once from an interactive session first: an unattended run can't finish the sign-in, so it shows a code nobody enters and stops without reviewing. CI isn't supported, because no one is signed in there. Don't copy `token.json` to another machine: GitHub accepts each refresh token once, so whichever machine refreshes second is signed out.
+
 To update in Claude Code, refresh the marketplace first. `claude plugin update` alone reports the installed version as the latest:
 
 ```sh
