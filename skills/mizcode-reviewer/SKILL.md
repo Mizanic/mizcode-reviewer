@@ -96,10 +96,13 @@ the check that stops a review the bot could never post:
 | `check_repo` returns | What to do |
 | --- | --- |
 | `{"ok": true}` | Continue. |
-| `"error": "not_installed"` | Stop before reviewing. Show the user the message: it has the install link. Once they install the bot, start again from gather. |
-| `"error": "no_access"` | Stop before reviewing and report the message: the bot posts only for users who can write to the repository. |
+| `"error": "not_installed"` | Run cleanup (step 9) and stop before reviewing. Show the user the message: it has the install link. Once they install the bot, start again from gather. |
+| `"error": "no_access"` | Run cleanup (step 9) and stop before reviewing. Report the message: the bot posts only for users who can write to the repository. |
 | `"error": "unauthorized"`, or HTTP 403 | Sign the user in as above, then call `check_repo` again. |
-| `"error": "github_error"` | Stop and report the message and `status`. |
+| `"error": "github_error"` | Run cleanup (step 9) and stop. Report the message and `status`. |
+
+gather has already made a worktree in the user's clone, so a run that stops
+here must still run cleanup.
 
 Skip the check for a pre-PR review, which posts nothing. If the tool is not
 available, the `mizcode-reviewer` MCP server is not set up: continue the

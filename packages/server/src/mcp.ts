@@ -26,8 +26,8 @@ export interface McpConfig {
   // that calls a tool gets 403 before any MCP handling when this is null.
   authenticate(request: Request): Promise<string | null>;
   github?: ClientOptions;
-  // One line per tool call: who called it, for which pull request, and the
-  // outcome. Never the token.
+  // One line per tool call: who called it, for which repository or pull
+  // request, and the outcome. Never the token.
   log?: (line: string) => void;
 }
 

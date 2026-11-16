@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { parseArgs } from "node:util";
 import {
   GitHubClientError,
+  INSTALL_URL,
   ReviewThreadsError,
   getPullRequest,
   getPullRequestDiff,
@@ -121,7 +122,7 @@ export async function gather(argv: string[], options: RunOptions): Promise<strin
     if (error instanceof GitHubClientError && error.status === 404) {
       throw new GitHubClientError(
         "not_installed",
-        `Could not read ${repoName}#${pullNumber}. Check the pull request number, and that mizcode-reviewer[bot] is installed on ${repoName}: https://github.com/apps/mizcode-reviewer/installations/new`,
+        `Could not read ${repoName}#${pullNumber}. Check the pull request number, and that mizcode-reviewer[bot] is installed on ${repoName}: ${INSTALL_URL}`,
       );
     }
     throw error;

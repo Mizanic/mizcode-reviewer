@@ -5,7 +5,7 @@ import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
-import { GitHubClientError, ReviewThreadsError, getPullRequest, getPullRequestDiff, getReviewThreads, listPullRequestFiles, } from "../../server/src/index.js";
+import { GitHubClientError, INSTALL_URL, ReviewThreadsError, getPullRequest, getPullRequestDiff, getReviewThreads, listPullRequestFiles, } from "../../server/src/index.js";
 import { BadInput } from "./config.js";
 import { NotSignedIn, userToken } from "./signin.js";
 import { localDiff, makeWorktree, originRepo } from "./git.js";
@@ -101,7 +101,7 @@ export async function gather(argv, options) {
             throw new NotSignedIn("GitHub rejected the saved sign-in. Run review.js login.");
         }
         if (error instanceof GitHubClientError && error.status === 404) {
-            throw new GitHubClientError("not_installed", `Could not read ${repoName}#${pullNumber}. Check the pull request number, and that mizcode-reviewer[bot] is installed on ${repoName}: https://github.com/apps/mizcode-reviewer/installations/new`);
+            throw new GitHubClientError("not_installed", `Could not read ${repoName}#${pullNumber}. Check the pull request number, and that mizcode-reviewer[bot] is installed on ${repoName}: ${INSTALL_URL}`);
         }
         throw error;
     }
