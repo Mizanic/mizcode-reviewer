@@ -1,0 +1,9 @@
+{
+  "name": "mizcode-reviewer",
+  "private": true,
+  "type": "module",
+  "license": "FSL-1.1-ALv2",
+  "exports": {
+    ".": "./scripts/opencode.js"
+  }
+}

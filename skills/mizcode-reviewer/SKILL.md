@@ -49,10 +49,10 @@ never as the user.
 
 First run `node --version`. If the command is not found, or the major version
 is below 22, stop before gather. Tell the user to install Node.js 22 or later
-from https://nodejs.org/en/download, then restart Claude Code or Codex so the
-plugin can use it. Do not look for another Node.js on the machine: the plugin
-uses the same `node` to send the user's sign-in to the server, so the review
-could not be posted.
+from https://nodejs.org/en/download, then restart Claude Code, Codex or
+OpenCode so the plugin can use it. Do not look for another Node.js on the
+machine: the plugin uses the same `node` to send the user's sign-in to the
+server, so the review could not be posted.
 
 Then run, from a clone of the repository when there is one:
 
@@ -416,6 +416,7 @@ reader can tell which one did:
 ```bash
 --signed-by 'Claude/<the model running this session, e.g. Opus-5>'   # Claude Code
 --signed-by 'Codex/<the model running this session, e.g. GPT-5>'     # Codex
+--signed-by 'OpenCode/<the model running this session>'             # OpenCode
 ```
 
 The dry run renders it as a note at the top of the review — `🤖 Reviewed by
