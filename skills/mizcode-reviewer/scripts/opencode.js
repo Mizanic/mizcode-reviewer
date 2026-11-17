@@ -1,5 +1,5 @@
-// The OpenCode plugin. `opencode plugin add` installs this repository as a
-// package, and package.json's exports point OpenCode here. It adds the
+// The OpenCode plugin. `opencode plugin add` installs the skill's folder as a
+// package, and the folder's package.json points OpenCode here. It adds the
 // mizcode-reviewer skill and the mizcode-reviewer MCP server. OpenCode can't
 // run a command to make the Authorization header, so the MCP server is the
 // local relay `review.js mcp`, which forwards to the shared bot's server with
@@ -8,8 +8,8 @@
 import { readFileSync } from "node:fs";
 import { URL, fileURLToPath } from "node:url";
 
-const skillFile = fileURLToPath(new URL("../skills/mizcode-reviewer/SKILL.md", import.meta.url));
-const reviewJs = fileURLToPath(new URL("../skills/mizcode-reviewer/scripts/review.js", import.meta.url));
+const skillFile = fileURLToPath(new URL("../SKILL.md", import.meta.url));
+const reviewJs = fileURLToPath(new URL("./review.js", import.meta.url));
 
 // Splits SKILL.md into its description and the text after the frontmatter.
 // The description is a folded block: the indented lines under `description: >-`.

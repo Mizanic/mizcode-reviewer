@@ -2,9 +2,6 @@
   "name": "mizcode-reviewer",
   "private": true,
   "type": "module",
-  "exports": {
-    ".": "./.opencode-plugin/server.js"
-  },
   "license": "FSL-1.1-ALv2",
   "workspaces": [
     "packages/*"
