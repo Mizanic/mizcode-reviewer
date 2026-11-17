@@ -7,3 +7,5 @@ Claude Code and Codex install the `mizcode-reviewer` plugin straight from this r
 When a change touches `packages/review/` or `packages/server/` code the skill uses, run `npm run build` and commit the rebuilt `skills/mizcode-reviewer/scripts/lib/` in the same PR.
 
 Codex caches the plugin by the `version` in `.codex-plugin/plugin.json`. Raise it when a change should reach Codex users.
+
+OpenCode installs only `skills/mizcode-reviewer/` (`opencode plugin add 'github:Mizanic/mizcode-reviewer::path:skills/mizcode-reviewer'`). Its `package.json` points OpenCode at `scripts/opencode.js`. Keep scripts out of that `package.json`: npm builds a git dependency that has a `build` or `prepare` script, and that step fails inside OpenCode.

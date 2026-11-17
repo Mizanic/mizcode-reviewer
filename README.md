@@ -1,6 +1,6 @@
 # mizcode-reviewer
 
-mizcode-reviewer lets your AI coding tool, Claude Code or Codex, post its pull request reviews as `mizcode-reviewer[bot]` instead of under your own GitHub account.
+mizcode-reviewer lets your AI coding tool, Claude Code, Codex or OpenCode, post its pull request reviews as `mizcode-reviewer[bot]` instead of under your own GitHub account.
 
 ## How it works
 
@@ -30,6 +30,14 @@ codex plugin marketplace add Mizanic/mizcode-reviewer
 codex plugin add mizcode-reviewer@mizcode-reviewer
 ```
 
+OpenCode:
+
+```sh
+opencode plugin add 'github:Mizanic/mizcode-reviewer::path:skills/mizcode-reviewer'
+```
+
+OpenCode can't run a command to add your sign-in to its requests, so its plugin starts `review.js mcp`, a local MCP server that passes each request on to the mizcode-reviewer server with your sign-in.
+
 The plugin adds the review skill and the connection to the server. Start a new session after you install it.
 
 Then install the bot on the repositories you want reviewed: https://github.com/apps/mizcode-reviewer/installations/new
@@ -42,7 +50,7 @@ Ask your AI tool to review a pull request, for example `/mizcode-reviewer 42`.
 
 The first time, the skill shows a code. Open https://github.com/login/device on any device and enter it. The sign-in is saved in `~/.config/mizcode-reviewer/token.json` on your machine, and later reviews skip this step.
 
-Unattended runs, such as `claude -p` or `codex exec`, work on a machine where you have signed in. Sign in once from an interactive session first: an unattended run can't finish the sign-in, so it shows a code nobody enters and stops without reviewing. CI isn't supported, because no one is signed in there. Don't copy `token.json` to another machine: GitHub accepts each refresh token once, so whichever machine refreshes second is signed out.
+Unattended runs, such as `claude -p`, `codex exec` or `opencode run`, work on a machine where you have signed in. Sign in once from an interactive session first: an unattended run can't finish the sign-in, so it shows a code nobody enters and stops without reviewing. CI isn't supported, because no one is signed in there. Don't copy `token.json` to another machine: GitHub accepts each refresh token once, so whichever machine refreshes second is signed out.
 
 To update in Claude Code, refresh the marketplace first. `claude plugin update` alone reports the installed version as the latest:
 
@@ -55,6 +63,12 @@ To update in Codex:
 
 ```sh
 codex plugin marketplace upgrade mizcode-reviewer
+```
+
+To update in OpenCode:
+
+```sh
+opencode plugin update 'github:Mizanic/mizcode-reviewer::path:skills/mizcode-reviewer'
 ```
 
 Then start a new session.
@@ -75,6 +89,12 @@ codex plugin remove mizcode-reviewer@mizcode-reviewer
 codex plugin marketplace remove mizcode-reviewer
 ```
 
+OpenCode:
+
+```sh
+opencode plugin remove 'github:Mizanic/mizcode-reviewer::path:skills/mizcode-reviewer'
+```
+
 The plugin's sign-in stays on your machine and on GitHub until you remove it:
 
 1. Delete `~/.config/mizcode-reviewer/token.json`.
@@ -91,6 +111,7 @@ node <skill>/scripts/review.js login [--wait]
 node <skill>/scripts/review.js gather <pr> [--repo <owner/name>]
 node <skill>/scripts/review.js post --workdir <dir> --findings-file <file> [--suspicions-file <file>] --signed-by <label> --dry-run
 node <skill>/scripts/review.js cleanup --workdir <dir>
+node <skill>/scripts/review.js mcp
 ```
 
 [packages/review/README.md](packages/review/README.md) is the command contract: every flag, the workdir files, the JSON output and the exit codes.
