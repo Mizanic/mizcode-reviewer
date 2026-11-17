@@ -8,6 +8,7 @@ import { GitFailed, cleanup } from "./cleanup.js";
 import { AgentFailed, BadInput, NotConfigured, ReviewIncomplete } from "./config.js";
 import { gather } from "./gather.js";
 import { post } from "./post.js";
+import { mcp } from "./relay.js";
 import { NotSignedIn, SignInFailed, login, token } from "./signin.js";
 
 export interface RunOptions extends ClientOptions {
@@ -24,6 +25,10 @@ export interface RunOptions extends ClientOptions {
   // The clock and the wait between login --wait's checks. Default: real time.
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
+  // The lines review.js mcp reads, one JSON-RPC message each, and where it
+  // writes its answers. Default: stdin and stdout.
+  input?: AsyncIterable<string> | Iterable<string>;
+  write?: (text: string) => void;
 }
 
 export const USAGE = `Usage: review.js <command> [options]
@@ -38,6 +43,8 @@ Commands:
   cleanup --workdir <dir>            Remove the worktree gather made
   login [--wait]                     Sign in to GitHub for the shared bot, once per machine
   token                              Print the Authorization header for the shared bot's MCP server
+  mcp                                Run a local MCP server that forwards to the shared bot's server,
+                                     for OpenCode
 
 Run review.js <command> --help for a command's options.
 
@@ -65,6 +72,7 @@ const COMMANDS: Record<string, (argv: string[], options: RunOptions) => Promise<
   cleanup,
   login,
   token,
+  mcp,
 };
 
 function withoutPeriod(text: string): string {

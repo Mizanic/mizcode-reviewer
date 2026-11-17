@@ -7,6 +7,7 @@ import { GitFailed, cleanup } from "./cleanup.js";
 import { AgentFailed, BadInput, NotConfigured, ReviewIncomplete } from "./config.js";
 import { gather } from "./gather.js";
 import { post } from "./post.js";
+import { mcp } from "./relay.js";
 import { NotSignedIn, SignInFailed, login, token } from "./signin.js";
 export const USAGE = `Usage: review.js <command> [options]
 
@@ -20,6 +21,8 @@ Commands:
   cleanup --workdir <dir>            Remove the worktree gather made
   login [--wait]                     Sign in to GitHub for the shared bot, once per machine
   token                              Print the Authorization header for the shared bot's MCP server
+  mcp                                Run a local MCP server that forwards to the shared bot's server,
+                                     for OpenCode
 
 Run review.js <command> --help for a command's options.
 
@@ -46,6 +49,7 @@ const COMMANDS = {
     cleanup,
     login,
     token,
+    mcp,
 };
 function withoutPeriod(text) {
     return text.replace(/\.+$/, "");

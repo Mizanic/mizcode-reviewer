@@ -313,11 +313,10 @@ export async function userToken(options) {
     }
     return value;
 }
-// The MCP client runs this before it connects. It must never fail: with no
-// usable token it prints {} and the server answers 403 to a tool call.
-export async function token(argv, options) {
-    if (parseFlags(argv, "token").help)
-        return TOKEN_USAGE;
+// The Authorization header for the MCP server, or {} if there is no usable
+// token. It never fails: without a token the server answers 403 to a tool
+// call.
+export async function authHeader(options) {
     let value;
     try {
         value = await currentToken(options);
@@ -325,5 +324,11 @@ export async function token(argv, options) {
     catch {
         value = null;
     }
-    return `${JSON.stringify(value ? { Authorization: `Bearer ${value}` } : {})}\n`;
+    return value ? { Authorization: `Bearer ${value}` } : {};
+}
+// Claude Code and Codex run this before they connect.
+export async function token(argv, options) {
+    if (parseFlags(argv, "token").help)
+        return TOKEN_USAGE;
+    return `${JSON.stringify(await authHeader(options))}\n`;
 }
