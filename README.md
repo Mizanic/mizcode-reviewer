@@ -65,10 +65,10 @@ To update in Codex:
 codex plugin marketplace upgrade mizcode-reviewer
 ```
 
-To update in OpenCode:
+To update in OpenCode, run the install command again. `opencode plugin update` only updates plugins from npm:
 
 ```sh
-opencode plugin update 'github:Mizanic/mizcode-reviewer::path:skills/mizcode-reviewer'
+opencode plugin add 'github:Mizanic/mizcode-reviewer::path:skills/mizcode-reviewer'
 ```
 
 Then start a new session.
