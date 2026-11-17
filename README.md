@@ -33,8 +33,10 @@ codex plugin add mizcode-reviewer@mizcode-reviewer
 OpenCode:
 
 ```sh
-opencode plugin add 'github:Mizanic/mizcode-reviewer::path:skills/mizcode-reviewer'
+opencode plugin add 'github:Mizanic/mizcode-reviewer#main::path:skills/mizcode-reviewer'
 ```
+
+Keep `#main` in the address: without it, npm reads `::path:` as part of the repository name and the install fails.
 
 OpenCode can't run a command to add your sign-in to its requests, so its plugin starts `review.js mcp`, a local MCP server that passes each request on to the mizcode-reviewer server with your sign-in.
 
@@ -68,9 +70,9 @@ codex plugin marketplace upgrade mizcode-reviewer
 To update in OpenCode, remove the plugin, delete OpenCode's downloaded copy, and add it again. `opencode plugin update` doesn't update plugins installed from GitHub, and adding the plugin again reuses the downloaded copy. `opencode debug paths` shows the cache folder if yours isn't `~/.cache/opencode`.
 
 ```sh
-opencode plugin remove 'github:Mizanic/mizcode-reviewer::path:skills/mizcode-reviewer'
+opencode plugin remove 'github:Mizanic/mizcode-reviewer#main::path:skills/mizcode-reviewer'
 rm -rf ~/.cache/opencode/npm/git-mizcode-reviewer-*
-opencode plugin add 'github:Mizanic/mizcode-reviewer::path:skills/mizcode-reviewer'
+opencode plugin add 'github:Mizanic/mizcode-reviewer#main::path:skills/mizcode-reviewer'
 ```
 
 Then start a new session.
@@ -94,7 +96,7 @@ codex plugin marketplace remove mizcode-reviewer
 OpenCode:
 
 ```sh
-opencode plugin remove 'github:Mizanic/mizcode-reviewer::path:skills/mizcode-reviewer'
+opencode plugin remove 'github:Mizanic/mizcode-reviewer#main::path:skills/mizcode-reviewer'
 rm -rf ~/.cache/opencode/npm/git-mizcode-reviewer-*
 ```
 
