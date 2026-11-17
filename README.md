@@ -65,9 +65,11 @@ To update in Codex:
 codex plugin marketplace upgrade mizcode-reviewer
 ```
 
-To update in OpenCode, run the install command again. `opencode plugin update` only updates plugins from npm:
+To update in OpenCode, remove the plugin, delete OpenCode's downloaded copy, and add it again. `opencode plugin update` doesn't update plugins installed from GitHub, and adding the plugin again reuses the downloaded copy. `opencode debug paths` shows the cache folder if yours isn't `~/.cache/opencode`.
 
 ```sh
+opencode plugin remove 'github:Mizanic/mizcode-reviewer::path:skills/mizcode-reviewer'
+rm -rf ~/.cache/opencode/npm/git-mizcode-reviewer-*
 opencode plugin add 'github:Mizanic/mizcode-reviewer::path:skills/mizcode-reviewer'
 ```
 
@@ -93,6 +95,7 @@ OpenCode:
 
 ```sh
 opencode plugin remove 'github:Mizanic/mizcode-reviewer::path:skills/mizcode-reviewer'
+rm -rf ~/.cache/opencode/npm/git-mizcode-reviewer-*
 ```
 
 The plugin's sign-in stays on your machine and on GitHub until you remove it:
